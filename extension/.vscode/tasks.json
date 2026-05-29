@@ -1,0 +1,31 @@
+{
+  // Pre-launch task referenced by .vscode/launch.json.
+  // Runs `npm run compile` which is `tsc -p .` per extension/package.json.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "compile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$tsc"],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "silent"
+      }
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": ["$tsc-watch"],
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "silent"
+      }
+    }
+  ]
+}

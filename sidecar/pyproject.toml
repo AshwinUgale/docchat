@@ -97,6 +97,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
 ]
+markers = [
+    "live_subprocess: spawns the real sidecar subprocess (slower; skip on flaky CI runners)",
+]
 
 # ---------------------------------------------------------------------------
 # Mypy: strict for our own code, lenient at the edges.

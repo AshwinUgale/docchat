@@ -7,7 +7,6 @@
         content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src ws://localhost:* http://localhost:*;" />
   <title>DocChat</title>
   <style>
-    /* Match VS Code's theme tokens — works in light + dark + high-contrast. */
     :root {
       color-scheme: light dark;
       font-family: var(--vscode-font-family, "Segoe UI", system-ui, sans-serif);
@@ -26,7 +25,17 @@
       padding: 8px 12px;
       border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
       font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
+    #status {
+      font-size: 0.85em;
+      font-weight: normal;
+      opacity: 0.7;
+    }
+    #status.ok { color: var(--vscode-testing-iconPassed, #3fb950); opacity: 1; }
+    #status.err { color: var(--vscode-testing-iconFailed, #f85149); opacity: 1; }
     #log {
       flex: 1;
       overflow-y: auto;
@@ -76,6 +85,7 @@
       outline: 1px solid var(--vscode-focusBorder, #0e639c);
       outline-offset: -1px;
     }
+    input:disabled { opacity: 0.5; }
     button {
       padding: 6px 14px;
       background: var(--vscode-button-background, #0e639c);
@@ -85,27 +95,31 @@
       cursor: pointer;
       font: inherit;
     }
-    button:hover {
-      background: var(--vscode-button-hoverBackground, #1177bb);
-    }
+    button:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    button:disabled { opacity: 0.5; cursor: default; }
   </style>
 </head>
 <body>
-  <header>DocChat <span style="opacity: 0.6;">v0.0</span></header>
+  <header>
+    <span>DocChat <span style="opacity: 0.6;">v0.1</span></span>
+    <span id="status">connecting…</span>
+  </header>
   <div id="log">
-    <div class="msg system">Chat panel scaffold — v0.1 wires the WebSocket round-trip.</div>
+    <div class="msg system">Waiting for sidecar port from extension…</div>
   </div>
   <form id="form">
-    <input id="input" type="text" placeholder="Ask about a library at your pinned version…" autocomplete="off" />
-    <button type="submit">Send</button>
+    <input id="input" type="text" placeholder="Ask about a library at your pinned version…" autocomplete="off" disabled />
+    <button id="send" type="submit" disabled>Send</button>
   </form>
 
   <script>
-    // v0.0 stub: appends user input locally, no sidecar wiring yet.
-    // v0.1 connects to ws://localhost:<port>/chat (port injected by the extension).
     const log = document.getElementById("log");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const status = document.getElementById("status");
+
+    let ws = null;
 
     function append(role, text) {
       const div = document.createElement("div");
@@ -115,13 +129,56 @@
       log.scrollTop = log.scrollHeight;
     }
 
+    function setStatus(text, cls) {
+      status.textContent = text;
+      status.className = cls || "";
+    }
+
+    function enableInput(enabled) {
+      input.disabled = !enabled;
+      sendBtn.disabled = !enabled;
+      if (enabled) input.focus();
+    }
+
+    function connect(port) {
+      append("system", `Opening WebSocket on ws://localhost:${port}/chat`);
+      const socket = new WebSocket(`ws://localhost:${port}/chat`);
+      socket.addEventListener("open", () => {
+        setStatus("connected", "ok");
+        append("system", "Connected. Type a message and press Send.");
+        enableInput(true);
+      });
+      socket.addEventListener("message", (event) => {
+        append("bot", String(event.data));
+      });
+      socket.addEventListener("close", (event) => {
+        setStatus("disconnected", "err");
+        append("system", `Connection closed (code ${event.code}).`);
+        enableInput(false);
+      });
+      socket.addEventListener("error", () => {
+        setStatus("error", "err");
+        append("system", "Connection error — check sidecar logs.");
+        enableInput(false);
+      });
+      ws = socket;
+    }
+
+    // The extension postMessages { type: "sidecarPort", port: <N> } on activation.
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (msg && msg.type === "sidecarPort" && typeof msg.port === "number") {
+        connect(msg.port);
+      }
+    });
+
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
       append("user", text);
+      ws.send(text);
       input.value = "";
-      append("system", "[sidecar not wired in v0.0]");
     });
   </script>
 </body>

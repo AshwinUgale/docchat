@@ -1,0 +1,21 @@
+{
+  // VS Code extension dev launcher.
+  // F5 in this workspace compiles TypeScript via the preLaunchTask, then opens
+  // a second VS Code window (the "Extension Development Host") with our
+  // extension loaded. From there: Ctrl+Shift+P -> DocChat: Open Chat Panel.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "preLaunchTask": "npm: compile"
+    }
+  ]
+}
