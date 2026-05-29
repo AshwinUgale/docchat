@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src ws://localhost:* http://localhost:*;" />
+  <title>DocChat</title>
+  <style>
+    /* Match VS Code's theme tokens — works in light + dark + high-contrast. */
+    :root {
+      color-scheme: light dark;
+      font-family: var(--vscode-font-family, "Segoe UI", system-ui, sans-serif);
+      font-size: var(--vscode-font-size, 13px);
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+      font-weight: 600;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .msg {
+      padding: 8px 10px;
+      border-radius: 6px;
+      max-width: 90%;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+    }
+    .msg.bot {
+      align-self: flex-start;
+      background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+    }
+    .msg.system {
+      align-self: center;
+      font-style: italic;
+      opacity: 0.7;
+      font-size: 0.9em;
+    }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    }
+    input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border-radius: 4px;
+      font: inherit;
+    }
+    input:focus {
+      outline: 1px solid var(--vscode-focusBorder, #0e639c);
+      outline-offset: -1px;
+    }
+    button {
+      padding: 6px 14px;
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover {
+      background: var(--vscode-button-hoverBackground, #1177bb);
+    }
+  </style>
+</head>
+<body>
+  <header>DocChat <span style="opacity: 0.6;">v0.0</span></header>
+  <div id="log">
+    <div class="msg system">Chat panel scaffold — v0.1 wires the WebSocket round-trip.</div>
+  </div>
+  <form id="form">
+    <input id="input" type="text" placeholder="Ask about a library at your pinned version…" autocomplete="off" />
+    <button type="submit">Send</button>
+  </form>
+
+  <script>
+    // v0.0 stub: appends user input locally, no sidecar wiring yet.
+    // v0.1 connects to ws://localhost:<port>/chat (port injected by the extension).
+    const log = document.getElementById("log");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+
+    function append(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      append("user", text);
+      input.value = "";
+      append("system", "[sidecar not wired in v0.0]");
+    });
+  </script>
+</body>
+</html>

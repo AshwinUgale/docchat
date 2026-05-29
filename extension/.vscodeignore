@@ -1,0 +1,10 @@
+# Excluded from the .vsix bundle. Keep the package as lean as possible.
+.vscode/**
+.vscode-test/**
+src/**
+node_modules/**
+tsconfig.json
+.eslintrc.cjs
+*.map
+*.ts
+!out/**/*.js

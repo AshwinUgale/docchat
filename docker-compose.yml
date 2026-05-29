@@ -1,0 +1,19 @@
+# Local Qdrant for development. Single service; persists to .qdrant-data/
+# (gitignored) so collections survive `docker compose down`.
+#
+#   docker compose up -d qdrant      # start
+#   docker compose down              # stop (data persists)
+#   docker compose down -v           # stop + wipe data
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: docchat-qdrant
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC
+    volumes:
+      - ./.qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+    restart: unless-stopped

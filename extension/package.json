@@ -1,0 +1,63 @@
+{
+  "name": "docchat",
+  "displayName": "DocChat",
+  "description": "Ask questions about your project's libraries at the exact versions your project pins.",
+  "version": "0.0.1",
+  "publisher": "ashwinugale",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "chat",
+    "rag",
+    "docs",
+    "version-pinned"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ashwinugale/docchat.git"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:docchat.openPanel"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "docchat.openPanel",
+        "title": "DocChat: Open Chat Panel",
+        "category": "DocChat"
+      }
+    ],
+    "configuration": {
+      "title": "DocChat",
+      "properties": {
+        "docchat.sidecarPython": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to the Python interpreter used to run the sidecar. Default: 'python' on PATH."
+        },
+        "docchat.sidecarPort": {
+          "type": "number",
+          "default": 0,
+          "description": "Port the sidecar should bind to. 0 = pick a random free port at startup."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "lint": "echo 'eslint placeholder'"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.0"
+  }
+}
