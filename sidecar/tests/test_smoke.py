@@ -1,10 +1,10 @@
-"""Smoke test - confirms the package imports and the WebSocket echoes.
-
-Walking-skeleton verification: prove the FastAPI app stands up, /health
-returns ok, and /chat echoes a message round-trip. No agent loop yet.
+"""Smoke test - confirms the package imports, the WebSocket dispatches typed
+messages, and the two PyPI dogfood libraries import.
 """
 
 from __future__ import annotations
+
+import json
 
 from fastapi.testclient import TestClient
 
@@ -26,14 +26,38 @@ def test_health_endpoint() -> None:
     assert body["version"] == docchat_sidecar.__version__
 
 
-def test_chat_websocket_echoes() -> None:
-    """v0.0 echo round-trip. v0.1 replaces this with a real agent assertion."""
+def test_chat_websocket_round_trips_user_query() -> None:
+    """v0.2 protocol: user_query in, assistant_text out (echo-style at v0.2)."""
     client = TestClient(app)
     with client.websocket_connect("/chat") as ws:
-        ws.send_text("hello")
-        assert ws.receive_text() == "echo: hello"
-        ws.send_text("world")
-        assert ws.receive_text() == "echo: world"
+        ws.send_text(json.dumps({"type": "user_query", "text": "hello"}))
+        reply = json.loads(ws.receive_text())
+        assert reply["type"] == "assistant_text"
+        assert "hello" in reply["text"]
+
+
+def test_chat_websocket_ping_pong() -> None:
+    """Ping returns a Pong carrying the sidecar version."""
+    client = TestClient(app)
+    with client.websocket_connect("/chat") as ws:
+        ws.send_text(json.dumps({"type": "ping"}))
+        reply = json.loads(ws.receive_text())
+        assert reply["type"] == "pong"
+        assert reply["version"] == docchat_sidecar.__version__
+
+
+def test_chat_websocket_rejects_malformed_frames() -> None:
+    """Bad frames produce a single error message and keep the connection open."""
+    client = TestClient(app)
+    with client.websocket_connect("/chat") as ws:
+        ws.send_text("not even json")
+        reply = json.loads(ws.receive_text())
+        assert reply["type"] == "assistant_text"
+        assert "protocol error" in reply["text"]
+        # Connection still open - a follow-up ping should work.
+        ws.send_text(json.dumps({"type": "ping"}))
+        reply2 = json.loads(ws.receive_text())
+        assert reply2["type"] == "pong"
 
 
 def test_dogfood_imports_resolve() -> None:

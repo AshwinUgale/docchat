@@ -2,8 +2,8 @@
 
 Mirrors what the TypeScript extension does in production: spawn the sidecar
 as a subprocess, read the port from stdout, open a WebSocket against /chat,
-echo a message, kill the process. If this passes, the v0.1 walking-skeleton
-plumbing is sound.
+exchange a typed message round-trip, kill the process. If this passes, the
+v0.1 walking-skeleton plumbing PLUS the v0.2 protocol upgrade are sound.
 
 This test is slower than the in-process TestClient tests because it actually
 launches uvicorn. Marked as a `live_subprocess` test so a future CI config
@@ -13,6 +13,7 @@ can skip it if subprocess + asyncio gets flaky on a particular runner.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import subprocess
 import sys
@@ -90,13 +91,21 @@ async def test_sidecar_spawns_and_prints_port() -> None:
 
 
 async def test_sidecar_chat_websocket_echoes() -> None:
-    """End-to-end round-trip: subprocess -> WS -> echo response."""
+    """End-to-end round-trip: subprocess -> WS -> typed protocol response.
+
+    Sends a v0.2 ``user_query`` and asserts the sidecar replies with an
+    ``assistant_text`` containing the original text (v0.2 placeholder echo;
+    v0.3 replaces this with the real ReAct loop).
+    """
     async with _spawn_sidecar() as (_proc, port):
         uri = f"ws://127.0.0.1:{port}/chat"
         async with websockets.connect(uri) as ws:
-            await ws.send("hello v0.1")
-            reply = await asyncio.wait_for(ws.recv(), timeout=2.0)
-            assert reply == "echo: hello v0.1"
-            await ws.send("again")
-            reply2 = await asyncio.wait_for(ws.recv(), timeout=2.0)
-            assert reply2 == "echo: again"
+            await ws.send(json.dumps({"type": "user_query", "text": "hello v0.2"}))
+            reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+            assert reply["type"] == "assistant_text"
+            assert "hello v0.2" in reply["text"]
+
+            await ws.send(json.dumps({"type": "ping"}))
+            reply2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+            assert reply2["type"] == "pong"
+            assert isinstance(reply2["version"], str)

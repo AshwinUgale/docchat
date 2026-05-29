@@ -14,13 +14,7 @@
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
     }
-    body {
-      margin: 0;
-      padding: 0;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
+    body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; }
     header {
       padding: 8px 12px;
       border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
@@ -28,6 +22,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 8px;
     }
     #status {
       font-size: 0.85em;
@@ -36,6 +31,30 @@
     }
     #status.ok { color: var(--vscode-testing-iconPassed, #3fb950); opacity: 1; }
     #status.err { color: var(--vscode-testing-iconFailed, #f85149); opacity: 1; }
+    #indexBtn {
+      padding: 3px 10px;
+      font-size: 0.85em;
+      background: transparent;
+      color: var(--vscode-button-foreground, inherit);
+      border: 1px solid var(--vscode-button-border, var(--vscode-button-background, #0e639c));
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #indexBtn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); color: #fff; }
+    #indexBtn:disabled { opacity: 0.4; cursor: default; }
+    #progressBar {
+      height: 3px;
+      background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+      overflow: hidden;
+      display: none;
+    }
+    #progressBar.active { display: block; }
+    #progressFill {
+      height: 100%;
+      width: 0%;
+      background: var(--vscode-progressBar-background, #0e639c);
+      transition: width 0.2s ease-out;
+    }
     #log {
       flex: 1;
       overflow-y: auto;
@@ -50,6 +69,7 @@
       max-width: 90%;
       line-height: 1.4;
       white-space: pre-wrap;
+      word-wrap: break-word;
     }
     .msg.user {
       align-self: flex-end;
@@ -65,6 +85,12 @@
       font-style: italic;
       opacity: 0.7;
       font-size: 0.9em;
+    }
+    .msg.error {
+      align-self: center;
+      background: var(--vscode-inputValidation-errorBackground, rgba(248, 81, 73, 0.15));
+      color: var(--vscode-inputValidation-errorForeground, #f85149);
+      border: 1px solid var(--vscode-inputValidation-errorBorder, #f85149);
     }
     form {
       display: flex;
@@ -95,15 +121,19 @@
       cursor: pointer;
       font: inherit;
     }
-    button:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+    button:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
     button:disabled { opacity: 0.5; cursor: default; }
   </style>
 </head>
 <body>
   <header>
-    <span>DocChat <span style="opacity: 0.6;">v0.1</span></span>
-    <span id="status">connecting…</span>
+    <span>DocChat <span style="opacity: 0.6;">v0.2</span></span>
+    <span style="display: flex; align-items: center; gap: 10px;">
+      <button id="indexBtn" type="button" disabled>Index React 18.2</button>
+      <span id="status">connecting…</span>
+    </span>
   </header>
+  <div id="progressBar"><div id="progressFill"></div></div>
   <div id="log">
     <div class="msg system">Waiting for sidecar port from extension…</div>
   </div>
@@ -117,9 +147,13 @@
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
+    const indexBtn = document.getElementById("indexBtn");
     const status = document.getElementById("status");
+    const progressBar = document.getElementById("progressBar");
+    const progressFill = document.getElementById("progressFill");
 
     let ws = null;
+    let indexing = false;
 
     function append(role, text) {
       const div = document.createElement("div");
@@ -134,10 +168,67 @@
       status.className = cls || "";
     }
 
-    function enableInput(enabled) {
+    function enableChat(enabled) {
       input.disabled = !enabled;
       sendBtn.disabled = !enabled;
+      indexBtn.disabled = !enabled || indexing;
       if (enabled) input.focus();
+    }
+
+    function setProgress(done, total) {
+      if (total == null) {
+        progressBar.classList.add("active");
+        progressFill.style.width = "5%";
+        return;
+      }
+      progressBar.classList.add("active");
+      const pct = Math.min(100, Math.round((done / total) * 100));
+      progressFill.style.width = pct + "%";
+    }
+
+    function hideProgress() {
+      progressBar.classList.remove("active");
+      progressFill.style.width = "0%";
+    }
+
+    function handleServerMessage(msg) {
+      switch (msg.type) {
+        case "assistant_text":
+          append("bot", msg.text);
+          break;
+        case "index_progress": {
+          if (!indexing) {
+            indexing = true;
+            indexBtn.disabled = true;
+            append("system", `Indexing ${msg.library}@${msg.version}…`);
+          }
+          setProgress(msg.chunks_done, msg.chunks_total);
+          if (msg.note) {
+            // Don't spam the log with every fetch line; just update status text.
+            setStatus(msg.note, "ok");
+          }
+          break;
+        }
+        case "index_complete":
+          indexing = false;
+          hideProgress();
+          setStatus("connected", "ok");
+          append("system", `Indexed ${msg.chunks_indexed} chunks for ${msg.library}@${msg.version}.`);
+          indexBtn.disabled = false;
+          break;
+        case "index_error":
+          indexing = false;
+          hideProgress();
+          setStatus("error", "err");
+          append("error", `Indexing ${msg.library}@${msg.version} failed: ${msg.message}`);
+          indexBtn.disabled = false;
+          break;
+        case "pong":
+          // Could surface sidecar version here for drift detection.
+          break;
+        default:
+          append("system", `Unknown server message: ${JSON.stringify(msg)}`);
+      }
     }
 
     function connect(port) {
@@ -145,26 +236,35 @@
       const socket = new WebSocket(`ws://localhost:${port}/chat`);
       socket.addEventListener("open", () => {
         setStatus("connected", "ok");
-        append("system", "Connected. Type a message and press Send.");
-        enableInput(true);
+        append("system", "Connected. Type a message or click 'Index React 18.2' to populate the docs collection.");
+        enableChat(true);
       });
       socket.addEventListener("message", (event) => {
-        append("bot", String(event.data));
+        try {
+          const msg = JSON.parse(event.data);
+          handleServerMessage(msg);
+        } catch (err) {
+          append("error", `Failed to parse server message: ${err}`);
+        }
       });
       socket.addEventListener("close", (event) => {
         setStatus("disconnected", "err");
         append("system", `Connection closed (code ${event.code}).`);
-        enableInput(false);
+        enableChat(false);
       });
       socket.addEventListener("error", () => {
         setStatus("error", "err");
         append("system", "Connection error — check sidecar logs.");
-        enableInput(false);
+        enableChat(false);
       });
       ws = socket;
     }
 
-    // The extension postMessages { type: "sidecarPort", port: <N> } on activation.
+    function send(msg) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify(msg));
+    }
+
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (msg && msg.type === "sidecarPort" && typeof msg.port === "number") {
@@ -175,10 +275,15 @@
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const text = input.value.trim();
-      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!text) return;
       append("user", text);
-      ws.send(text);
+      send({ type: "user_query", text });
       input.value = "";
+    });
+
+    indexBtn.addEventListener("click", () => {
+      if (indexing) return;
+      send({ type: "index_library", library: "react", version: "18.2.0" });
     });
   </script>
 </body>
