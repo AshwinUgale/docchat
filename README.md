@@ -20,19 +20,23 @@ DocChat fixes this. It parses your project's lockfiles, indexes the docs for the
 
 ## How it does
 
-| Metric | v0.5 baseline | Corpus |
+| Metric | v0.6 baseline | Corpus |
 |---|---|---|
-| **Version correctness** (substring, over answered entries) | **1.000** | 20-pair React 18.2 |
-| **Refusal rate** (over entries classified out-of-scope) | **1.000** | 4 true oos + retrieval-gated refusals |
-| **Answer accuracy** (LLM-judged, over answered entries) | **~0.80** | judged-in-scope only |
-| **p95 latency** | **~2.5 s** | gpt-4o-mini, single-iteration ReAct |
-| **Cost / turn** | **~$0.0001** | embedding + chat |
+| **Refusal rate** (over entries classified out-of-scope) | **1.000** | 30-pair, 2 libraries |
+| **Version correctness** (substring, over answered entries) | **0.750** | React 18.2 + FastAPI 0.95 |
+| **Answer accuracy** (LLM-judged, over answered entries) | **0.625** | judged-in-scope only |
+| **p95 latency** | **~7.3 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
+| **Cost / turn** | **~$0.0003** | 1–3 OpenAI calls per query |
 
-When DocChat answers, it answers correctly for the pinned version — `version=1.000` says zero leakage of React-19-only APIs (`use(promise)`, `ReactDOM.render`, etc.) into React 18.2 answers. That's the exact failure mode latest-version-only assistants have.
+When DocChat refuses, it refuses cleanly with the canonical "I don't have documentation" phrase — `refusal=1.000` on the entries classified as out-of-scope. The retrieval similarity floor (`SearchDocsTool.score_floor=0.15`) plus a HARD-RULE system prompt prevents the agent from leaking pretraining knowledge when retrieval comes back empty.
 
-When DocChat doesn't answer, it refuses cleanly with the canonical "I don't have documentation for that" phrase — `refusal=1.000` on the classified-oos bucket. The retrieval similarity floor (`score_floor=0.15` on `SearchDocsTool`) drops weak Qdrant hits below the cosine threshold so the agent never tries to dress up an off-topic retrieval as a real answer.
+When DocChat does answer, it grounds in the retrieved context — but at v0.6, the answer-bucket is small (8 of 24 in-scope corpus entries answered through). The other 16 were over-refused because the floor pruned hits the agent could have used. **v0.6 made the architecture deeper (multi-iteration ReAct, real workspace + changelog tools, second indexed library) at the cost of measured recall**: floor-based gating that worked on a single tight corpus hits its limit on a more diverse one. The honest framing is that v0.6 is a recall-conservative system; v0.7's plan is per-collection floor tuning + better doc chunking to widen the answer bucket.
 
-**Honest caveat:** the v0.5 floor-based gating is conservative on a sparse corpus. The current React 18.2 index is 10 hook pages (~50 chunks); on that surface, some legitimate in-scope queries score below the floor and get refused alongside the 4 true out-of-scope entries. v0.6 expands the corpus (FastAPI 0.95 + more React pages) to widen the precision/recall band.
+**Engineering trade-offs the v0.6 numbers expose:**
+
+- 2 of 30 queries hit the `max_iterations=3` cap — exactly the cases where retrieval was inconclusive and the model correctly tried multiple tools before refusing. The iteration cap is doing its job.
+- `version=0.750` (vs v0.5's 1.000) traces to 2 of the 8 answered entries leaking a next-major-version API. Multi-iteration ReAct over a denser retrieval cluster occasionally surfaces a chunk from the wrong era; v0.7's chunk-metadata refactor will let the prompt say "stay inside the pinned-version chunks."
+- `p95=7.3s` is multi-iteration overhead. Single-iteration would be faster but couldn't chain `search_docs → search_workspace_code` for "where in my code do I use this" questions.
 
 Reproduce with one command:
 

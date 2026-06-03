@@ -124,6 +124,9 @@ async def _run_agent(ws: WebSocket, query: str) -> None:
             openai=AsyncOpenAI(),
             qdrant=AsyncQdrantClient(url=qdrant_url),
             memory=memory,
+            # v0.6: thread the workspace path through to the agent so
+            # SearchWorkspaceCodeTool can scope ripgrep correctly.
+            workspace_path=workspace_path,
         )
         response = await agent.answer(query)
     except Exception as exc:

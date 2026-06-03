@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-02
+
+### Added
+- **Multi-iteration ReAct loop** via OpenAI's tool-calling API. `Agent.answer()` now passes `tools=[...]` to `chat.completions.create`, forces a tool dispatch on iteration 0 with `tool_choice="required"`, then lets the model chain up to `max_iterations=3` tool calls before finalizing the answer. Citations aggregate across iterations and dedupe at finalize time.
+- **Real `SearchWorkspaceCodeTool`** via `asyncio.create_subprocess_exec` over ripgrep with `--json` output, 8s timeout, top-5 hits with 2 lines of context. Graceful messages for missing workspace, missing rg binary, and subprocess timeout.
+- **Real `FindInChangelogTool`** that fetches CHANGELOG.md from per-library raw-GitHub URLs (React's facebook/react, FastAPI's tiangolo/fastapi), per-process LRU-by-URL cache, regex-splits on `## <heading>` and returns sections matching both version and query, truncated to 6 KB.
+- **FastAPI 0.95 as second indexed library.** `_urls_for()` extends with 10 FastAPI tutorial pages. Validates the indexer works for non-React libraries.
+- **Eval corpus extends to 30 pairs across two libraries**: 16 React in-scope + 8 FastAPI in-scope + 6 oos (4 React-context + 2 FastAPI-context). `forbidden_apis` on FastAPI entries pin Pydantic v2 idioms (`model_dump`, `model_config`, `model_validate`) so the eval catches FastAPI 0.95 → 0.100+ regressions.
+- `Agent` constructor accepts `workspace_path` (threaded from `DOCCHAT_WORKSPACE_PATH` env var) and `max_iterations`.
+- `AgentResponse.iterations` field surfaces how many ReAct iterations actually ran.
+
+### Changed
+- System prompt rewritten for the tool-calling shape. HARD RULES section preserved with the canonical "I don't have documentation" phrase so the eval's `is_refusal` heuristic continues to match.
+- `tool_schemas()` shape unchanged at the source; the Agent wraps each in OpenAI's `{"type": "function", "function": {...}}` envelope before passing to chat completions.
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to 0.6.0.
+- Indexer error message for unsupported libraries now reflects v0.6's two-library support.
+
+### Notes
+- ADR-009 captures the design space: why multi-iteration via OpenAI function-calling beats manual ReAct, why ripgrep over the VS Code workspace API at v0.6, why CHANGELOG fetch + regex beats Qdrant indexing for release notes, why one merged corpus over per-library files.
+- `rg` is a soft dependency. Workspace-code questions degrade gracefully when it's not installed.
+- **Measured numbers on the 30-pair corpus**: `refusal_rate=1.000`, `version_correctness=0.750`, `answer_accuracy=0.625`, `p95=7251ms`. 8 of 24 in-scope corpus entries answered through; the other 16 over-refused because the 0.15 retrieval floor that worked on the tighter React-only v0.5 corpus is too aggressive for the expanded FastAPI surface. 2 entries hit the `max_iterations=3` cap (useId, FastAPI Annotated) — exactly the cases where retrieval was inconclusive and the model correctly tried multiple tools. `version_correctness` dropped from v0.5's 1.000 to 0.750 because 2 of 8 answered entries leaked a next-major API; the chunk-metadata refactor at v0.7 will let the prompt enforce version-specific grounding more strictly.
+- Trade-off acknowledged: v0.6 made the architecture deeper (multi-iteration ReAct, real workspace + changelog tools, second indexed library) at the cost of measured recall. Floor-based gating that worked on a single tight corpus hits its limit on a more diverse one.
+
 ## [0.5.0] - 2026-06-02
 
 ### Added
@@ -66,7 +89,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/AshwinUgale/docchat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/AshwinUgale/docchat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AshwinUgale/docchat/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AshwinUgale/docchat/compare/v0.2.0...v0.3.0

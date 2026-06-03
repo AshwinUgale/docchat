@@ -1,9 +1,16 @@
-"""Tests for the v0.3 agent tools."""
+"""Tests for the v0.6 agent tools.
+
+SearchDocsTool tests are v0.3/v0.5 (Qdrant retrieval + cosine floor).
+v0.6 adds real implementations for the other two tools; tests for those
+mock the subprocess (ripgrep) + httpx (GitHub raw fetch) respectively.
+"""
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from docchat_sidecar.tools import (
@@ -170,18 +177,118 @@ async def test_search_docs_score_floor_is_configurable() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_search_workspace_code_stub_returns_placeholder() -> None:
-    tool = SearchWorkspaceCodeTool()
+async def test_search_workspace_code_no_workspace_message() -> None:
+    tool = SearchWorkspaceCodeTool(workspace_path=None)
     result = await tool.run(query="useState")
-    assert "stub" in result.text.lower()
+    assert "no workspace" in result.text.lower()
     assert result.citations == []
 
 
-async def test_find_in_changelog_stub_returns_placeholder() -> None:
+async def test_search_workspace_code_invalid_dir_message() -> None:
+    tool = SearchWorkspaceCodeTool(workspace_path="/this/path/does/not/exist")
+    result = await tool.run(query="anything")
+    assert "not a directory" in result.text.lower()
+
+
+async def test_search_workspace_code_handles_missing_rg(tmp_path: Path) -> None:
+    """If the rg binary is unresolvable, the tool returns a guidance message."""
+    tool = SearchWorkspaceCodeTool(
+        workspace_path=tmp_path, rg_binary="rg_definitely_not_installed_xyz"
+    )
+    result = await tool.run(query="anything")
+    assert "ripgrep" in result.text.lower()
+    assert "not installed" in result.text.lower()
+
+
+async def test_search_workspace_code_parses_real_rg(tmp_path: Path) -> None:
+    """End-to-end real rg invocation. Skipped if rg isn't on PATH."""
+    import shutil
+
+    if shutil.which("rg") is None:
+        pytest.skip("ripgrep not installed on this runner")
+
+    sample = tmp_path / "hello.py"
+    sample.write_text("def greet() -> str:\n    return 'hello DocChat'\n", encoding="utf-8")
+    tool = SearchWorkspaceCodeTool(workspace_path=tmp_path)
+    result = await tool.run(query="DocChat")
+    assert "hello.py" in result.text
+    assert "DocChat" in result.text
+
+
+# ---------------------------------------------------------------------------
+# FindInChangelogTool - real fetch + version-section grep
+# ---------------------------------------------------------------------------
+
+
+_CHANGELOG_FIXTURE = """\
+## 18.3.0 (April 25, 2024)
+
+- Some 18.3 feature.
+
+## 18.2.0 (June 14, 2022)
+
+- React added support for useSyncExternalStore.
+- Strict Mode now intentionally double-invokes effects in development.
+- Concurrent rendering APIs ship.
+
+## 18.1.0 (April 26, 2022)
+
+- Bug fixes only.
+"""
+
+
+async def test_find_in_changelog_returns_matching_section() -> None:
+    """Real httpx fetch via MockTransport returns the changelog text; tool
+    slices out the version section the user asked about."""
+
+    # Clear the process-level cache so this test is hermetic regardless
+    # of which other tests ran before.
+    from docchat_sidecar.tools import _CHANGELOG_CACHE
+
+    _CHANGELOG_CACHE.clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_CHANGELOG_FIXTURE)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        tool = FindInChangelogTool(http=http)
+        result = await tool.run(library="react", version="18.2.0", query="useSyncExternalStore")
+    finally:
+        await http.aclose()
+
+    assert "useSyncExternalStore" in result.text
+    assert "18.2.0" in result.text
+    assert "18.1.0" not in result.text  # other version section dropped
+    assert len(result.citations) == 1
+    assert result.citations[0].source == "CHANGELOG.md"
+
+
+async def test_find_in_changelog_returns_message_for_unknown_library() -> None:
     tool = FindInChangelogTool()
-    result = await tool.run(library="react", version="18.2.0", query="breaking changes")
-    assert "stub" in result.text.lower()
-    assert result.citations == []
+    result = await tool.run(library="some_random_lib", version="1.0.0", query="anything")
+    assert "no changelog source" in result.text.lower()
+
+
+async def test_find_in_changelog_returns_message_when_version_missing() -> None:
+    """No section for the requested version -> tool returns 'no entry' text."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_CHANGELOG_FIXTURE)
+
+    # Bust the per-process cache so a different URL is exercised fresh.
+    from docchat_sidecar.tools import _CHANGELOG_CACHE
+
+    _CHANGELOG_CACHE.clear()
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        tool = FindInChangelogTool(http=http)
+        result = await tool.run(library="react", version="99.99.0", query="anything")
+    finally:
+        await http.aclose()
+
+    assert "no changelog entry" in result.text.lower()
 
 
 # ---------------------------------------------------------------------------

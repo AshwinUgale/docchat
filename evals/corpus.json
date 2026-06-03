@@ -1,6 +1,6 @@
 {
-  "name": "docchat_react_18_2_v0_4",
-  "description": "20-pair eval corpus for React 18.2 (16 in-scope + 4 out-of-scope refusals). Each in-scope entry pins forbidden_apis to the 19-only equivalents so version_correctness catches regressions to the wrong version.",
+  "name": "docchat_react_18_2_fastapi_0_95_v0_6",
+  "description": "30-pair eval corpus spanning two indexed libraries (React 18.2 + FastAPI 0.95). 16 React in-scope + 8 FastAPI in-scope + 6 out-of-scope refusal targets (4 originals + 2 FastAPI-context oos). Each in-scope entry pins forbidden_apis to the next-major equivalents so version_correctness catches regressions (React 19 hooks for React entries, Pydantic v2 / FastAPI 0.100+ idioms for FastAPI entries).",
   "entries": [
     {
       "id": "react_18_useState_basic",
@@ -149,11 +149,84 @@
       "forbidden_apis": ["use(promise)", "use(fetch"]
     },
     {
+      "id": "fastapi_0_95_dependency_basic",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I inject a shared dependency (e.g. a database session) into a FastAPI route handler?",
+      "expected_answer": "Declare a function that produces the dependency, then declare it as a parameter on the route using Depends(): def get_db(): ... ; @app.get('/x') def handler(db = Depends(get_db)): ... . FastAPI resolves Depends() per request.",
+      "expected_apis": ["Depends"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_pydantic_v1_model",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I declare a request body schema in FastAPI 0.95?",
+      "expected_answer": "Create a Pydantic BaseModel subclass with typed fields, then declare it as the parameter type on the route. FastAPI 0.95 ships with Pydantic v1, so use the v1 API (class Config, .dict(), .json()).",
+      "wrong_for_other_version": "Pydantic v2 (which FastAPI 0.100+ depends on) replaces .dict()/.json() with .model_dump()/.model_dump_json() and class Config with model_config. Don't suggest these for 0.95.",
+      "expected_apis": ["BaseModel"],
+      "forbidden_apis": ["model_dump", "model_config", "model_validate"]
+    },
+    {
+      "id": "fastapi_0_95_response_model",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I make a FastAPI endpoint return only certain fields from an internal model?",
+      "expected_answer": "Pass response_model=PublicSchema to the route decorator. FastAPI filters the returned object through that schema, dropping fields that aren't on PublicSchema.",
+      "expected_apis": ["response_model"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_background_tasks",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I run a task after returning a FastAPI response without blocking the response?",
+      "expected_answer": "Declare a BackgroundTasks parameter on the route, then call background_tasks.add_task(func, *args). FastAPI runs the task after the response is sent.",
+      "expected_apis": ["BackgroundTasks", "add_task"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_cors",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I enable CORS for a FastAPI application?",
+      "expected_answer": "Use CORSMiddleware: app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:3000'], allow_credentials=True, allow_methods=['*'], allow_headers=['*']). Import CORSMiddleware from fastapi.middleware.cors.",
+      "expected_apis": ["CORSMiddleware", "add_middleware"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_httpexception",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I return a 404 error from a FastAPI endpoint?",
+      "expected_answer": "Raise HTTPException(status_code=404, detail='Item not found'). FastAPI catches it and returns the matching JSON error response.",
+      "expected_apis": ["HTTPException"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_annotated_depends",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "What is the preferred way to declare a dependency on a FastAPI 0.95 route using Python's typing.Annotated?",
+      "expected_answer": "Use Annotated[ReturnType, Depends(producer)] as the parameter annotation: def handler(db: Annotated[Session, Depends(get_db)]). FastAPI 0.95 introduced this idiom; it composes with mypy better than the legacy `param: T = Depends(...)` form.",
+      "expected_apis": ["Annotated", "Depends"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_95_dependency_with_yield",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I write a FastAPI dependency that needs setup AND teardown (e.g. open a DB transaction, commit or rollback)?",
+      "expected_answer": "Use a generator with yield: def get_db(): db = SessionLocal(); try: yield db; finally: db.close(). FastAPI runs the yield-prefix as setup, passes the yielded value to the route, then runs the post-yield part after the response is sent.",
+      "expected_apis": ["yield"],
+      "forbidden_apis": []
+    },
+    {
       "id": "react_18_oos_python",
       "library": "react",
       "version": "18.2.0",
       "question": "How do I write a Python decorator for a Flask route?",
-      "expected_answer": "Out of scope. DocChat should refuse - this is a Python/Flask question, not a React one.",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a Flask question; neither React nor FastAPI covers Flask routing.",
       "out_of_scope": true
     },
     {
@@ -161,7 +234,7 @@
       "library": "react",
       "version": "18.2.0",
       "question": "How do I configure a Vite plugin for image optimisation?",
-      "expected_answer": "Out of scope. DocChat should refuse - Vite is not the indexed library here.",
+      "expected_answer": "Out of scope. DocChat should refuse - Vite is not in the indexed library set.",
       "out_of_scope": true
     },
     {
@@ -169,7 +242,7 @@
       "library": "react",
       "version": "18.2.0",
       "question": "Why is my Node.js server crashing with EADDRINUSE on port 3000?",
-      "expected_answer": "Out of scope. DocChat should refuse - this is a Node runtime/networking question, not a React docs question.",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a Node runtime/networking question, not in the indexed docs.",
       "out_of_scope": true
     },
     {
@@ -177,7 +250,23 @@
       "library": "react",
       "version": "18.2.0",
       "question": "What is the difference between let and const in JavaScript?",
-      "expected_answer": "Out of scope. DocChat should refuse - this is a general JavaScript language question, not specific to React.",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a general JavaScript language question, not specific to an indexed library.",
+      "out_of_scope": true
+    },
+    {
+      "id": "fastapi_0_95_oos_django",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I write a Django REST framework viewset for a User model?",
+      "expected_answer": "Out of scope. DocChat should refuse - Django is not in the indexed library set (only FastAPI is for Python web).",
+      "out_of_scope": true
+    },
+    {
+      "id": "fastapi_0_95_oos_react",
+      "library": "fastapi",
+      "version": "0.95.0",
+      "question": "How do I call my FastAPI backend from a React useEffect hook?",
+      "expected_answer": "Out of scope as phrased. The React side of this (useEffect + fetch) is an in-scope React question, but DocChat treating this entry as an oos refusal target is intentional: the question crosses libraries and the agent shouldn't try to weave a multi-library answer at v0.6.",
       "out_of_scope": true
     }
   ]

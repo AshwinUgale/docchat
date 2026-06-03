@@ -16,7 +16,8 @@ def test_bundled_corpus_loads() -> None:
     corpus = TypeAdapter(Corpus).validate_python(data)
     assert corpus.name
     assert corpus.entries
-    assert len(corpus.entries) == 20
+    # v0.6 corpus: 16 React + 8 FastAPI in-scope + 6 oos = 30 entries.
+    assert len(corpus.entries) == 30
 
 
 def test_bundled_corpus_has_in_and_out_of_scope() -> None:
@@ -25,9 +26,19 @@ def test_bundled_corpus_has_in_and_out_of_scope() -> None:
     corpus = TypeAdapter(Corpus).validate_python(data)
     in_scope = [e for e in corpus.entries if not e.out_of_scope]
     oos = [e for e in corpus.entries if e.out_of_scope]
-    # 16 in-scope + 4 out-of-scope - the documented mix in description.
-    assert len(in_scope) == 16
-    assert len(oos) == 4
+    # v0.6 mix: 24 in-scope (16 React + 8 FastAPI) + 6 oos.
+    assert len(in_scope) == 24
+    assert len(oos) == 6
+
+
+def test_bundled_corpus_covers_both_indexed_libraries() -> None:
+    """v0.6 corpus must include both react and fastapi entries."""
+    corpus_path = Path(__file__).resolve().parent.parent / "corpus.json"
+    data = json.loads(corpus_path.read_text(encoding="utf-8"))
+    corpus = TypeAdapter(Corpus).validate_python(data)
+    libs = {e.library for e in corpus.entries}
+    assert "react" in libs
+    assert "fastapi" in libs
 
 
 def test_bundled_corpus_ids_are_unique() -> None:

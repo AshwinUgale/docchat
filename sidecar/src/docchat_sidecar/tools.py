@@ -1,25 +1,34 @@
-"""Agent tools - one real, two stubs.
+"""Agent tools.
 
-v0.3 ships three tools so ``ToolPicker`` has a real routing problem
-(picking between them with 4+ tools is when ToolPicker starts paying for
-itself; with 1 tool it's decorative). Only ``search_docs`` is real;
-``search_workspace_code`` and ``find_in_changelog`` return placeholders
-that v0.4+ will fill in.
+v0.6 makes all three tools real:
+- ``SearchDocsTool`` (real since v0.3) - Qdrant retrieval over the user's
+  pinned-version doc collection. Drops hits below the cosine floor (ADR-008).
+- ``SearchWorkspaceCodeTool`` (real at v0.6) - shells out to ripgrep over
+  the open VS Code workspace path. Returns up to 5 file:line:snippet hits.
+- ``FindInChangelogTool`` (real at v0.6) - fetches the library's
+  CHANGELOG.md from a hardcoded per-library raw-GitHub URL, slices out the
+  version section.
 
-Each tool advertises an OpenAI function-call schema via
-``tool_schemas()``; the schemas feed into ``FunctionSchemaSource`` so
-ToolPicker can rank them per query. The agent loop then dispatches to the
-picked tool's ``run()`` method.
+Each tool advertises an OpenAI function-call schema via ``tool_schemas()``;
+the schemas feed into ``FunctionSchemaSource`` so ToolPicker can rank them
+per query, and into ``Agent._openai_tool_specs`` so the chat-completions
+``tools`` array is the same shape.
 
 Tools return ``ToolResult`` objects carrying both the text the LLM should
-see AND the citation list the chat panel renders separately.
+see AND the structured citation list the chat panel renders separately.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient
 
@@ -34,12 +43,14 @@ __all__ = [
     "tool_schemas",
 ]
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, kw_only=True)
 class Citation:
     """Inline citation token rendered by the chat panel.
 
-    Format: ``[react@18.2.0:useState.md]``. v0.5 layers click-to-open on
+    Format: ``[react@18.2.0:useState.md]``. v0.5+ layers click-to-open on
     top of this same shape.
     """
 
@@ -65,7 +76,7 @@ class ToolResult:
 
 
 # ---------------------------------------------------------------------------
-# search_docs - the only real tool at v0.3
+# search_docs - Qdrant retrieval over the pinned-version doc collection
 # ---------------------------------------------------------------------------
 
 
@@ -145,13 +156,27 @@ class SearchDocsTool:
 
 
 # ---------------------------------------------------------------------------
-# Stubs - ToolPicker has real tools to route between; the v0.4+ work fills
-# these in with real implementations.
+# search_workspace_code - real at v0.6 via ripgrep
 # ---------------------------------------------------------------------------
 
 
+# Cap on bytes returned per rg invocation - prevents giant binary matches
+# from blowing up the LLM context.
+_RG_MAX_BYTES = 64 * 1024
+# Max files we extract from rg's JSON output before truncating.
+_RG_MAX_HITS = 5
+# Context lines around each match.
+_RG_CONTEXT_LINES = 2
+
+
 class SearchWorkspaceCodeTool:
-    """Stub: search the user's own code in the open VS Code workspace."""
+    """Search the user's open VS Code workspace via ripgrep.
+
+    v0.6 shells out to ``rg --json`` over the workspace path. Graceful
+    degradation: if ``rg`` is not on PATH or no workspace was opened, the
+    tool returns a short text explaining the situation so the agent can
+    refuse cleanly instead of hallucinating.
+    """
 
     name = "search_workspace_code"
     description = (
@@ -161,17 +186,126 @@ class SearchWorkspaceCodeTool:
         "library's docs."
     )
 
+    def __init__(
+        self,
+        *,
+        workspace_path: str | Path | None = None,
+        rg_binary: str = "rg",
+        max_hits: int = _RG_MAX_HITS,
+        context_lines: int = _RG_CONTEXT_LINES,
+    ) -> None:
+        self._workspace_path = Path(workspace_path) if workspace_path else None
+        self._rg_binary = rg_binary
+        self._max_hits = max_hits
+        self._context_lines = context_lines
+
     async def run(self, *, query: str) -> ToolResult:
-        return ToolResult(
-            text=(
-                f"[search_workspace_code stub] would search the workspace for "
-                f"{query!r}. Real implementation lands at v0.4."
+        if self._workspace_path is None:
+            return ToolResult(
+                text=(
+                    "No workspace is open - I can't search workspace code. "
+                    "Open a folder in VS Code and try again."
+                )
             )
-        )
+        if not self._workspace_path.is_dir():
+            return ToolResult(text=f"Workspace path {self._workspace_path} is not a directory.")
+
+        # ripgrep is the tool. We pass --json so the parser is deterministic
+        # and -C for surrounding context. --max-count caps per-file hits.
+        cmd = [
+            self._rg_binary,
+            "--json",
+            "--max-count",
+            "3",
+            "-C",
+            str(self._context_lines),
+            "--",
+            query,
+            str(self._workspace_path),
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+        except FileNotFoundError:
+            return ToolResult(
+                text=(
+                    "ripgrep (rg) is not installed on this system. "
+                    "Install it via 'winget install BurntSushi.ripgrep.MSVC' "
+                    "(Windows) or 'brew install ripgrep' (macOS) to enable "
+                    "workspace code search."
+                )
+            )
+        except TimeoutError:
+            return ToolResult(text="Workspace search timed out after 8 seconds.")
+
+        # Truncate to be safe before parsing.
+        stdout = stdout_bytes[:_RG_MAX_BYTES].decode("utf-8", errors="replace")
+        hits = _parse_rg_json(stdout, max_hits=self._max_hits)
+        if not hits:
+            return ToolResult(text=f"No matches for {query!r} in the workspace.")
+
+        text_parts: list[str] = []
+        for hit in hits:
+            text_parts.append(f"## {hit['path']}:{hit['line']}\n\n```\n{hit['text']}\n```")
+        return ToolResult(text="\n\n".join(text_parts))
+
+
+def _parse_rg_json(stdout: str, *, max_hits: int) -> list[dict[str, Any]]:
+    """Extract the top N matches from ``rg --json`` output.
+
+    rg emits one JSON object per line; we want the ``type=="match"`` ones.
+    """
+    hits: list[dict[str, Any]] = []
+    for raw_line in stdout.splitlines():
+        if not raw_line.strip():
+            continue
+        try:
+            evt = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if evt.get("type") != "match":
+            continue
+        data = evt.get("data", {})
+        path_info = data.get("path", {})
+        line_info = data.get("line_number")
+        lines_info = data.get("lines", {})
+        # rg's path can be {"text": "..."} or {"bytes": "..."}; prefer text.
+        path = path_info.get("text") or path_info.get("bytes") or "?"
+        line_text = lines_info.get("text") or ""
+        hits.append({"path": path, "line": line_info or 0, "text": line_text.rstrip()})
+        if len(hits) >= max_hits:
+            break
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# find_in_changelog - real at v0.6 via GitHub raw fetch
+# ---------------------------------------------------------------------------
+
+
+# Per-library CHANGELOG / release-notes URL on raw.githubusercontent.com.
+# Same shape as the indexer's URL map - hardcoded for the libraries we
+# actually index. v0.7+ can promote this to a config table.
+_CHANGELOG_URLS: dict[str, str] = {
+    "react": "https://raw.githubusercontent.com/facebook/react/main/CHANGELOG.md",
+    "fastapi": "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/release-notes.md",
+}
+
+_CHANGELOG_CACHE: dict[str, str] = {}
 
 
 class FindInChangelogTool:
-    """Stub: find breaking-change notes for a library version."""
+    """Find breaking-change notes for a library version.
+
+    v0.6 fetches the library's CHANGELOG.md from raw.githubusercontent.com
+    (cached per-library for the process lifetime), grep-style filters the
+    text for paragraphs mentioning the requested version, and returns the
+    matching slice.
+    """
 
     name = "find_in_changelog"
     description = (
@@ -180,27 +314,96 @@ class FindInChangelogTool:
         "'is this deprecated in Y', or 'when was Z added'."
     )
 
+    def __init__(self, *, http: httpx.AsyncClient | None = None) -> None:
+        self._http = http
+
     async def run(self, *, library: str, version: str, query: str) -> ToolResult:
-        del query
-        return ToolResult(
-            text=(
-                f"[find_in_changelog stub] would fetch the changelog for "
-                f"{library}@{version}. Real implementation lands at v0.4."
+        url = _CHANGELOG_URLS.get(library.lower())
+        if url is None:
+            return ToolResult(
+                text=(
+                    f"No CHANGELOG source configured for {library!r}. "
+                    f"v0.6 supports: {', '.join(sorted(_CHANGELOG_URLS))}."
+                )
             )
-        )
+
+        try:
+            text = await self._fetch_changelog(url)
+        except httpx.HTTPError as exc:
+            return ToolResult(text=f"Failed to fetch CHANGELOG for {library}: {exc}")
+
+        slice_text = _extract_version_section(text, version=version, query=query)
+        if not slice_text:
+            return ToolResult(
+                text=(f"No CHANGELOG entry mentioning {library}@{version} matched {query!r}.")
+            )
+        citation = Citation(library=library, version=version, source="CHANGELOG.md")
+        return ToolResult(text=slice_text, citations=[citation])
+
+    async def _fetch_changelog(self, url: str) -> str:
+        if url in _CHANGELOG_CACHE:
+            return _CHANGELOG_CACHE[url]
+        owns_http = self._http is None
+        http = self._http or httpx.AsyncClient(timeout=15.0, follow_redirects=True)
+        try:
+            response = await http.get(url)
+            response.raise_for_status()
+            _CHANGELOG_CACHE[url] = response.text
+            return response.text
+        finally:
+            if owns_http:
+                await http.aclose()
+
+
+def _extract_version_section(text: str, *, version: str, query: str) -> str:
+    """Return paragraphs from a CHANGELOG that mention the version.
+
+    Strategy: split on Markdown headings, keep sections whose heading or
+    body contains the requested version. If the user's query is more
+    specific than the version (e.g. "useTransition" within "18.0.0"),
+    filter further by query substring.
+
+    Truncated to ~6 KB so the LLM context isn't blown on a giant section.
+    """
+    # Split on Markdown H2/H3-style headings; keep the heading as part of
+    # its section by reattaching the matched delimiter.
+    parts = re.split(r"(?m)^(## .+)$", text)
+    # parts now looks like: [pre-text, heading1, body1, heading2, body2, ...]
+    sections: list[str] = []
+    if parts and parts[0].strip():
+        sections.append(parts[0])
+    for i in range(1, len(parts), 2):
+        heading = parts[i]
+        body = parts[i + 1] if i + 1 < len(parts) else ""
+        sections.append(f"{heading}\n{body}")
+
+    version_lower = version.lower()
+    query_lower = (query or "").lower()
+    matching: list[str] = []
+    for s in sections:
+        if version_lower in s.lower():
+            if query_lower and query_lower not in s.lower():
+                continue
+            matching.append(s.strip())
+    if not matching:
+        return ""
+    joined = "\n\n---\n\n".join(matching)
+    if len(joined) > 6000:
+        joined = joined[:6000] + "\n\n[... truncated]"
+    return joined
 
 
 # ---------------------------------------------------------------------------
-# Tool schemas fed to ToolPicker
+# Tool schemas fed to ToolPicker + Agent's OpenAI function-call wrapper
 # ---------------------------------------------------------------------------
 
 
 def tool_schemas() -> list[dict[str, Any]]:
-    """OpenAI function-call schemas describing every v0.3 tool.
+    """Function-call schemas describing every v0.6 tool.
 
-    ``ToolPicker(FunctionSchemaSource(tool_schemas()), ...)`` is the
-    construction we feed to the picker. The ``name`` field is the routing
-    key the agent loop uses to dispatch to the right tool.
+    Same shape as v0.3 (``{name, description, parameters}``); the Agent
+    wraps each in OpenAI's ``{"type": "function", "function": {...}}``
+    envelope before passing to the chat completions API.
     """
     return [
         {

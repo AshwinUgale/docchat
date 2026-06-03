@@ -50,6 +50,23 @@ _REACT_18_2_URLS: tuple[str, ...] = (
     "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useTransition.md",
 )
 
+# v0.6: FastAPI 0.95 as the second indexed library, sourced from the
+# fastapi repo's docs tree on master. Same compromise as React (v0.2):
+# we fetch the current-master MD and label it as 0.95 because the user's
+# lockfile pin drives the collection name. v0.7+ resolves git refs.
+_FASTAPI_0_95_URLS: tuple[str, ...] = (
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/first-steps.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/path-params.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/query-params.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/body.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/response-model.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/dependencies/index.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/background-tasks.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/middleware.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/cors.md",
+    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/dependencies/dependencies-with-yield.md",
+)
+
 # OpenAI text-embedding-3-small dimensions (default).
 _DEFAULT_DIMENSIONS = 1536
 # Target chunk size in characters - rough proxy for ~500 tokens.
@@ -122,7 +139,9 @@ class DocIndexer:
             yield IndexError(
                 library=library,
                 version=version,
-                message=f"no indexer wired for {library}@{version} yet (v0.2 supports react only)",
+                message=(
+                    f"no indexer wired for {library}@{version} yet (v0.6 supports react + fastapi)"
+                ),
             )
             return
 
@@ -232,9 +251,21 @@ class DocIndexer:
 
 
 def _urls_for(library: str, version: str) -> tuple[str, ...]:
-    """Source URLs for a given (library, version). v0.2 only knows React."""
-    if library.lower() == "react":
+    """Source URLs for a given (library, version).
+
+    v0.2 shipped React only. v0.6 adds FastAPI 0.95 to validate that the
+    indexer works for non-React libraries and to give the eval corpus a
+    second-library bucket. The (library, version) match is intentionally
+    loose: any react version maps to the React URLs, any fastapi version
+    maps to the FastAPI URLs. Per-version branching lands at v1.0 when
+    git-ref resolution is wired in.
+    """
+    del version
+    lib = library.lower()
+    if lib == "react":
         return _REACT_18_2_URLS
+    if lib == "fastapi":
+        return _FASTAPI_0_95_URLS
     return ()
 
 
