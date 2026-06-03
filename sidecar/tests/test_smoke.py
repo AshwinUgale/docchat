@@ -27,13 +27,19 @@ def test_health_endpoint() -> None:
 
 
 def test_chat_websocket_round_trips_user_query() -> None:
-    """v0.2 protocol: user_query in, assistant_text out (echo-style at v0.2)."""
+    """v0.3 protocol: user_query in, assistant_text out via the agent loop.
+
+    The agent path requires OpenAI + Qdrant clients; without them
+    configured we expect an ``[agent error]`` AssistantText (the handler
+    catches exceptions and surfaces them as a message rather than
+    crashing the WS). Either way the protocol round-trip works.
+    """
     client = TestClient(app)
     with client.websocket_connect("/chat") as ws:
         ws.send_text(json.dumps({"type": "user_query", "text": "hello"}))
         reply = json.loads(ws.receive_text())
         assert reply["type"] == "assistant_text"
-        assert "hello" in reply["text"]
+        assert isinstance(reply["text"], str)
 
 
 def test_chat_websocket_ping_pong() -> None:

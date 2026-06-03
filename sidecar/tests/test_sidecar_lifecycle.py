@@ -93,19 +93,26 @@ async def test_sidecar_spawns_and_prints_port() -> None:
 async def test_sidecar_chat_websocket_echoes() -> None:
     """End-to-end round-trip: subprocess -> WS -> typed protocol response.
 
-    Sends a v0.2 ``user_query`` and asserts the sidecar replies with an
-    ``assistant_text`` containing the original text (v0.2 placeholder echo;
-    v0.3 replaces this with the real ReAct loop).
+    v0.3 user_query goes through the real agent loop (Mneme + ToolPicker +
+    OpenAI). Without OpenAI/Qdrant configured in CI, the handler surfaces
+    the error as an ``[agent error]`` AssistantText - either way, the WS
+    protocol round-trip works. The Ping/Pong assertion exercises the
+    typed-protocol path without any external dependencies.
     """
     async with _spawn_sidecar() as (_proc, port):
         uri = f"ws://127.0.0.1:{port}/chat"
         async with websockets.connect(uri) as ws:
-            await ws.send(json.dumps({"type": "user_query", "text": "hello v0.2"}))
-            reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
-            assert reply["type"] == "assistant_text"
-            assert "hello v0.2" in reply["text"]
-
+            # Ping/Pong is the deterministic protocol round-trip - no agent
+            # involvement, so it works without OpenAI/Qdrant.
             await ws.send(json.dumps({"type": "ping"}))
-            reply2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
-            assert reply2["type"] == "pong"
-            assert isinstance(reply2["version"], str)
+            reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
+            assert reply["type"] == "pong"
+            assert isinstance(reply["version"], str)
+
+            # A user_query lands an AssistantText regardless of whether the
+            # agent path succeeds (errors come back as a typed message, not
+            # a torn connection).
+            await ws.send(json.dumps({"type": "user_query", "text": "hello v0.3"}))
+            reply2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=15.0))
+            assert reply2["type"] == "assistant_text"
+            assert isinstance(reply2["text"], str)

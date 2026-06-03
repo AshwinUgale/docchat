@@ -88,9 +88,7 @@ async def chat(ws: WebSocket) -> None:
 async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | Ping) -> None:
     """Route a parsed client message to the appropriate handler."""
     if isinstance(msg, UserQuery):
-        # v0.2 placeholder: echo back as an assistant message. v0.3 runs
-        # the ReAct loop here.
-        await _send(ws, AssistantText(text=f"[v0.2 echo] {msg.text}"))
+        await _run_agent(ws, msg.text)
         return
     if isinstance(msg, IndexLibrary):
         await _run_indexing(ws, msg.library, msg.version)
@@ -98,6 +96,42 @@ async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | Ping) -> None
     if isinstance(msg, Ping):
         await _send(ws, Pong(version=__version__))
         return
+
+
+async def _run_agent(ws: WebSocket, query: str) -> None:
+    """v0.3 ReAct loop: route -> tool -> retrieve -> generate -> respond.
+
+    Constructs the Agent per query for simplicity; the cost is two SDK
+    constructors plus a Mneme MemoryManager - all cheap when the OpenAI
+    + Qdrant clients aren't doing network work yet. A future optimisation
+    is per-connection caching, but the v0.3 demo doesn't need it.
+    """
+    # Lazy import - keeps the bare /health surface free of OpenAI + Qdrant
+    # + Mneme deps for users who only want IPC verification.
+    import os
+
+    from openai import AsyncOpenAI
+    from qdrant_client import AsyncQdrantClient
+
+    from docchat_sidecar.agent import Agent
+    from docchat_sidecar.memory import build_memory
+
+    try:
+        qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
+        workspace_path = os.environ.get("DOCCHAT_WORKSPACE_PATH")
+        memory = build_memory(workspace_path=workspace_path, qdrant_url=None)
+        agent = Agent(
+            openai=AsyncOpenAI(),
+            qdrant=AsyncQdrantClient(url=qdrant_url),
+            memory=memory,
+        )
+        response = await agent.answer(query)
+    except Exception as exc:
+        logger.exception("agent failed")
+        await _send(ws, AssistantText(text=f"[agent error] {exc}"))
+        return
+
+    await _send(ws, AssistantText(text=response.text))
 
 
 async def _run_indexing(ws: WebSocket, library: str, version: str) -> None:
