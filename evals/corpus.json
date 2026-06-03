@@ -1,0 +1,184 @@
+{
+  "name": "docchat_react_18_2_v0_4",
+  "description": "20-pair eval corpus for React 18.2 (16 in-scope + 4 out-of-scope refusals). Each in-scope entry pins forbidden_apis to the 19-only equivalents so version_correctness catches regressions to the wrong version.",
+  "entries": [
+    {
+      "id": "react_18_useState_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I add local state to a function component in React?",
+      "expected_answer": "Call useState(initialValue) at the top of the function component. It returns a tuple of the current value and a setter function. Destructure as const [value, setValue] = useState(initialValue).",
+      "wrong_for_other_version": "React 19 adds the `use` hook for unwrapping promises in state, but useState is still the right answer for basic state.",
+      "expected_apis": ["useState"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useState_lazy_init",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I compute the initial state of useState lazily, so the function doesn't run on every render?",
+      "expected_answer": "Pass a function (not a value) to useState. React calls it only on the initial render: useState(() => expensiveComputation()).",
+      "expected_apis": ["useState"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useEffect_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I run a side effect after a component renders?",
+      "expected_answer": "Use useEffect(() => { /* effect */ }, [deps]). The dependency array controls when the effect re-runs. Return a cleanup function to undo the effect.",
+      "expected_apis": ["useEffect"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useEffect_cleanup",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I clean up a subscription created in useEffect?",
+      "expected_answer": "Return a cleanup function from the effect callback. React runs it before re-running the effect and on unmount: useEffect(() => { const sub = api.subscribe(); return () => sub.unsubscribe(); }, []).",
+      "expected_apis": ["useEffect"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useEffect_strict_mode",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "Why does my useEffect run twice in development in React 18?",
+      "expected_answer": "React 18's Strict Mode intentionally mounts, unmounts, then re-mounts every component once in development to surface effects that aren't cleanup-safe. Production runs the effect once. Implement a cleanup function so the double-run is harmless.",
+      "expected_apis": ["useEffect", "Strict Mode"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useContext_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I read a Context value inside a function component?",
+      "expected_answer": "Call useContext(MyContext) at the top of the component. It returns the current value of the nearest matching <MyContext.Provider> ancestor. Re-renders when the provider's value changes.",
+      "expected_apis": ["useContext"],
+      "forbidden_apis": ["use("]
+    },
+    {
+      "id": "react_18_useReducer_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I manage complex local state with multiple sub-fields in React?",
+      "expected_answer": "Use useReducer(reducer, initialState). It returns [state, dispatch]; call dispatch(action) to update. The reducer is a pure (state, action) => newState function.",
+      "expected_apis": ["useReducer"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useMemo_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I avoid recomputing an expensive value on every render?",
+      "expected_answer": "Wrap the computation in useMemo(() => expensive(deps), [deps]). React caches the result and only recomputes when a dep changes.",
+      "expected_apis": ["useMemo"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useCallback_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I memoize a callback so a memoized child component doesn't re-render every time?",
+      "expected_answer": "Wrap the callback in useCallback(fn, [deps]). It returns a stable function reference that only changes when a dep changes - useful when passing handlers to React.memo'd children.",
+      "expected_apis": ["useCallback"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useRef_dom",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I get a reference to a DOM node in a function component?",
+      "expected_answer": "Create a ref with useRef(null) and pass it to the JSX node's ref attribute. Access the node via ref.current after render.",
+      "expected_apis": ["useRef"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useRef_mutable_value",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I keep a mutable value between renders without triggering a re-render when it changes?",
+      "expected_answer": "Use useRef(initial). Mutate ref.current directly; React does NOT re-render when you change ref.current. Good for timer ids, previous values, or any imperative handle.",
+      "expected_apis": ["useRef"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useId_basic",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I generate a unique ID for accessibility attributes that stays stable across renders and works with SSR?",
+      "expected_answer": "Call useId() at the top of the component. It returns a unique stable string safe for HTML id attributes and consistent between server and client.",
+      "expected_apis": ["useId"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useSyncExternalStore",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "What hook should I use to subscribe to an external store from a React 18 component?",
+      "expected_answer": "Use useSyncExternalStore(subscribe, getSnapshot). It returns the current snapshot and re-renders when subscribe's callback fires. Designed for concurrent-mode safety with external stores.",
+      "expected_apis": ["useSyncExternalStore"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_useTransition",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I mark a state update as non-urgent so the UI stays responsive during expensive renders?",
+      "expected_answer": "Call useTransition() to get [isPending, startTransition]. Wrap the state update in startTransition(() => setState(next)). React prioritises urgent updates over the wrapped transition.",
+      "expected_apis": ["useTransition", "startTransition"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "react_18_concurrent_mount_api",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I mount a React app to the DOM in React 18?",
+      "expected_answer": "Import createRoot from react-dom/client, call root = createRoot(document.getElementById('root')), then root.render(<App />). React 17's ReactDOM.render is deprecated.",
+      "expected_apis": ["createRoot"],
+      "forbidden_apis": ["ReactDOM.render"]
+    },
+    {
+      "id": "react_18_no_use_hook_yet",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I unwrap a Promise inside a component body in React 18.2?",
+      "expected_answer": "React 18.2 does not have a stable `use` hook for promises. Use a useEffect + useState pattern (set state when the promise resolves), or wrap with React.Suspense + a library like SWR / React Query. The `use` hook ships in React 19.",
+      "wrong_for_other_version": "React 19 introduces use(promise) for unwrapping promises in render. Don't suggest this for 18.2.",
+      "expected_apis": ["useEffect"],
+      "forbidden_apis": ["use(promise)", "use(fetch"]
+    },
+    {
+      "id": "react_18_oos_python",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I write a Python decorator for a Flask route?",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a Python/Flask question, not a React one.",
+      "out_of_scope": true
+    },
+    {
+      "id": "react_18_oos_unrelated_lib",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "How do I configure a Vite plugin for image optimisation?",
+      "expected_answer": "Out of scope. DocChat should refuse - Vite is not the indexed library here.",
+      "out_of_scope": true
+    },
+    {
+      "id": "react_18_oos_runtime_error",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "Why is my Node.js server crashing with EADDRINUSE on port 3000?",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a Node runtime/networking question, not a React docs question.",
+      "out_of_scope": true
+    },
+    {
+      "id": "react_18_oos_general_js",
+      "library": "react",
+      "version": "18.2.0",
+      "question": "What is the difference between let and const in JavaScript?",
+      "expected_answer": "Out of scope. DocChat should refuse - this is a general JavaScript language question, not specific to React.",
+      "out_of_scope": true
+    }
+  ]
+}

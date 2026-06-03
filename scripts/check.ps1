@@ -35,6 +35,26 @@ finally {
 }
 
 # ---------------------------------------------------------------------------
+# Evals harness (lives outside the sidecar package, runs against the sidecar
+# package via PYTHONPATH so the runner's lazy imports of the agent resolve).
+# ---------------------------------------------------------------------------
+$repoRoot = (Get-Location).Path
+$sidecarSrc = Join-Path $repoRoot "sidecar\src"
+$env:PYTHONPATH = "$repoRoot;$sidecarSrc"
+Push-Location sidecar
+try {
+    Step "evals: ruff"     { uv run ruff check ..\evals --fix }
+    # -c points pytest at the eval-specific pytest.ini so asyncio_mode=auto
+    # is picked up (we're Push-Location'd into sidecar/ which has its own
+    # config that would otherwise win).
+    Step "evals: pytest"   { uv run pytest -c ..\evals\pytest.ini ..\evals\tests }
+}
+finally {
+    Pop-Location
+    Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
 # TypeScript extension
 # ---------------------------------------------------------------------------
 Push-Location extension
