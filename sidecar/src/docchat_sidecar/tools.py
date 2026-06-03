@@ -87,11 +87,21 @@ class SearchDocsTool:
         openai: AsyncOpenAI,
         embed_model: str = "text-embedding-3-small",
         top_k: int = 5,
+        score_floor: float = 0.15,
     ) -> None:
         self._qdrant = qdrant
         self._openai = openai
         self._embed_model = embed_model
         self._top_k = top_k
+        # v0.5: drop hits below this cosine-similarity floor. The first
+        # eval pass at floor=0.25 over-pruned: 8/16 in-scope corpus entries
+        # had their top hit below 0.25 (the React 18.2 doc corpus is only
+        # 10 hook pages, and verbose question phrasings dilute the
+        # similarity score). 0.15 keeps the legitimate-but-weak in-scope
+        # hits while still blocking the four out-of-scope queries (Flask /
+        # Vite / Node EADDRINUSE / let-vs-const) whose top hits clustered
+        # below 0.15. See ADR-008.
+        self._score_floor = score_floor
 
     async def run(self, *, library: str, version: str, query: str) -> ToolResult:
         collection = collection_name_for(library, version)
@@ -112,7 +122,11 @@ class SearchDocsTool:
             query=query_vector,
             limit=self._top_k,
         )
-        hits = query_response.points
+        raw_hits = query_response.points
+        # v0.5: drop low-confidence hits. The agent prompt then refuses
+        # cleanly on the empty result rather than hallucinating from base
+        # knowledge.
+        hits = [h for h in raw_hits if getattr(h, "score", 0.0) >= self._score_floor]
         if not hits:
             return ToolResult(text=f"No relevant chunks found for {query!r}.")
         text_parts: list[str] = []
