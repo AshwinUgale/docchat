@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-02
+
+### Fixed
+- **`version_correctness` regression from v0.6 in `FindInChangelogTool`**: `_extract_version_section` in `tools.py` used a plain substring match (`version in section.lower()`), which let neighbouring-version sections leak in whenever they mentioned the requested version in passing (e.g. React 19's section saying "fixed in 18.2.0"). That leak surfaced as the model picking up React-19 / Pydantic-v2 APIs from supposedly-version-scoped context. v0.6.1 replaces the substring match with a word-boundary regex anchored to the section HEADING. The version must appear in the H2 heading itself, not just the body. "0.95.0" no longer matches "0.95.10".
+
+### Added
+- Two new `test_tools.py` tests exercising the changelog fix directly: one verifies React 19's body-mention of 18.2.0 doesn't leak into a v18.2.0 query; one verifies "0.95.0" doesn't prefix-match "0.95.10".
+- `test_sidecar_chat_websocket_echoes` timeout raised from 15s to 45s to fit the v0.6 multi-iteration agent loop's real-world p95 (~7s + headroom).
+
+### Changed
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to 0.6.1.
+
+### Tried, reverted
+- Attempted to soften the HARD RULES system prompt so the model would try a second tool before refusing on an empty first-tool result. The intent was to recover v0.6's recall (16/24 in-scope entries were over-refused). The change swung too far the other way: the eval went from `in_scope=8, accuracy=0.625, version=0.750` to `in_scope=29, accuracy=0.000, version=0.207` because the model interpreted any loosely-related second-tool output as "useful context" and synthesized wrong-version answers — even off-topic Django / Vite questions got answered from base knowledge. Reverted to the v0.6 prompt; the prompt-vs-floor recall problem is a v0.7 structural item (per-collection thresholds + chunk metadata for version grounding), not a wording one.
+
+### Notes
+- v0.6.1 is a focused patch: it ships ONLY the changelog regex fix. The prompt-softening experiment is documented in this CHANGELOG as a failed iteration rather than hidden — the data showed the trade-off and the v0.7 plan accounts for it.
+- Expected eval numbers post-patch: similar to v0.6's `in_scope=8, accuracy=0.625` baseline but with `version_correctness` lifted back toward 1.000 because the changelog leak that put React-19 and Pydantic-v2 strings into otherwise-correct answers is now closed.
+
 ## [0.6.0] - 2026-06-02
 
 ### Added
@@ -89,7 +108,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AshwinUgale/docchat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/AshwinUgale/docchat/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AshwinUgale/docchat/compare/v0.3.0...v0.4.0

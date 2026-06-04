@@ -356,35 +356,51 @@ class FindInChangelogTool:
 
 
 def _extract_version_section(text: str, *, version: str, query: str) -> str:
-    """Return paragraphs from a CHANGELOG that mention the version.
+    """Return CHANGELOG sections whose HEADING matches the requested version.
 
-    Strategy: split on Markdown headings, keep sections whose heading or
-    body contains the requested version. If the user's query is more
-    specific than the version (e.g. "useTransition" within "18.0.0"),
-    filter further by query substring.
+    v0.6.1 fix: previously this used a plain substring match (``version in
+    section.lower()``) which let adjacent-version context leak in - asking
+    about React 18.2.0 would match the React 19 section because the text
+    "18.2.0" also appears there in a "fixed in 18.2.0" backport note. That
+    leak surfaced in the v0.6 eval as ``version_correctness=0.750`` (the
+    model picked up React-19 / Pydantic-v2 APIs from supposedly-version-
+    scoped context).
+
+    v0.6.1 strategy:
+    1. Split on H2 headings (``## ...``).
+    2. A section qualifies only if the HEADING contains the version,
+       anchored as a word boundary - so "0.95.0" no longer matches
+       "0.95.10" or "0.95.0" inside a longer string.
+    3. If a query is given, further require it to appear in the section
+       text (body OR heading) - this filters huge release-notes pages.
 
     Truncated to ~6 KB so the LLM context isn't blown on a giant section.
     """
-    # Split on Markdown H2/H3-style headings; keep the heading as part of
-    # its section by reattaching the matched delimiter.
     parts = re.split(r"(?m)^(## .+)$", text)
     # parts now looks like: [pre-text, heading1, body1, heading2, body2, ...]
-    sections: list[str] = []
-    if parts and parts[0].strip():
-        sections.append(parts[0])
+    section_pairs: list[tuple[str, str]] = []
     for i in range(1, len(parts), 2):
         heading = parts[i]
         body = parts[i + 1] if i + 1 < len(parts) else ""
-        sections.append(f"{heading}\n{body}")
+        section_pairs.append((heading, body))
 
-    version_lower = version.lower()
+    # Word-boundary version match so "0.95.0" doesn't match "0.95.10".
+    # Escape the version since it contains dots which are regex metachars.
+    version_pattern = re.compile(r"\b" + re.escape(version) + r"\b", re.IGNORECASE)
     query_lower = (query or "").lower()
+
     matching: list[str] = []
-    for s in sections:
-        if version_lower in s.lower():
-            if query_lower and query_lower not in s.lower():
-                continue
-            matching.append(s.strip())
+    for heading, body in section_pairs:
+        # Strict: the version must appear in the HEADING, not just the body.
+        # Adjacent-version sections that happen to mention the requested
+        # version in passing don't qualify any more.
+        if not version_pattern.search(heading):
+            continue
+        section_text = f"{heading}\n{body}".strip()
+        if query_lower and query_lower not in section_text.lower():
+            continue
+        matching.append(section_text)
+
     if not matching:
         return ""
     joined = "\n\n---\n\n".join(matching)

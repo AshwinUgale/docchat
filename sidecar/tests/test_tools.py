@@ -270,6 +270,70 @@ async def test_find_in_changelog_returns_message_for_unknown_library() -> None:
     assert "no changelog source" in result.text.lower()
 
 
+async def test_find_in_changelog_v0_6_1_does_not_leak_adjacent_version_context() -> None:
+    """v0.6.1 fix: a body-mention of the requested version in a NEIGHBOURING
+    section's body must NOT qualify that section. Otherwise React 19's
+    section would leak into a React 18.2 query because the React 19
+    release notes often mention "fixed in 18.2.0".
+    """
+    from docchat_sidecar.tools import _CHANGELOG_CACHE
+
+    _CHANGELOG_CACHE.clear()
+
+    fixture = (
+        "## 19.0.0 (December 5, 2024)\n\n"
+        "- Backports the 18.2.0 fix for Strict Mode double-invocation. "
+        "Introduces use(promise) for unwrapping promises.\n\n"
+        "## 18.2.0 (June 14, 2022)\n\n"
+        "- Adds useSyncExternalStore.\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=fixture)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        tool = FindInChangelogTool(http=http)
+        result = await tool.run(library="react", version="18.2.0", query="useSyncExternalStore")
+    finally:
+        await http.aclose()
+
+    # The 18.2.0 section is included; the 19.0.0 section must NOT be,
+    # even though it mentions "18.2.0" in its body. This is the leak that
+    # caused the v0.6 version_correctness regression.
+    assert "useSyncExternalStore" in result.text
+    assert "use(promise)" not in result.text  # the React 19 forbidden API
+
+
+async def test_find_in_changelog_v0_6_1_does_not_prefix_match_subversion() -> None:
+    """v0.6.1 fix: version "0.95.0" must NOT match heading "0.95.10". The
+    \b word-boundary in the new regex prevents the prefix-match leak."""
+    from docchat_sidecar.tools import _CHANGELOG_CACHE
+
+    _CHANGELOG_CACHE.clear()
+
+    fixture = (
+        "## 0.95.10\n\n"
+        "- Patch release. Added Pydantic v2 helpers like model_dump().\n\n"
+        "## 0.95.0\n\n"
+        "- Initial 0.95 line. Introduces Annotated[X, Depends(...)] idiom.\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=fixture)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        tool = FindInChangelogTool(http=http)
+        result = await tool.run(library="fastapi", version="0.95.0", query="Annotated")
+    finally:
+        await http.aclose()
+
+    # 0.95.0 section included; 0.95.10 must NOT be (no prefix-leak).
+    assert "Annotated" in result.text
+    assert "model_dump" not in result.text  # the Pydantic-v2 forbidden API
+
+
 async def test_find_in_changelog_returns_message_when_version_missing() -> None:
     """No section for the requested version -> tool returns 'no entry' text."""
 

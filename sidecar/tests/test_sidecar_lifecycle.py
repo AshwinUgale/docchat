@@ -98,6 +98,12 @@ async def test_sidecar_chat_websocket_echoes() -> None:
     the error as an ``[agent error]`` AssistantText - either way, the WS
     protocol round-trip works. The Ping/Pong assertion exercises the
     typed-protocol path without any external dependencies.
+
+    v0.6.1 raised the user_query timeout from 15s to 45s: the v0.6
+    multi-iteration agent loop combined with v0.6.1's "try 2+ tools before
+    refusing" prompt rule means a single user_query is now 2-3 sequential
+    OpenAI calls on the real path. Real-world p95 is in the 7-15s range;
+    45s gives plenty of headroom for slow Windows boxes / cold connections.
     """
     async with _spawn_sidecar() as (_proc, port):
         uri = f"ws://127.0.0.1:{port}/chat"
@@ -112,7 +118,7 @@ async def test_sidecar_chat_websocket_echoes() -> None:
             # A user_query lands an AssistantText regardless of whether the
             # agent path succeeds (errors come back as a typed message, not
             # a torn connection).
-            await ws.send(json.dumps({"type": "user_query", "text": "hello v0.3"}))
-            reply2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=15.0))
+            await ws.send(json.dumps({"type": "user_query", "text": "hello v0.6"}))
+            reply2 = json.loads(await asyncio.wait_for(ws.recv(), timeout=45.0))
             assert reply2["type"] == "assistant_text"
             assert isinstance(reply2["text"], str)

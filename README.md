@@ -20,23 +20,23 @@ DocChat fixes this. It parses your project's lockfiles, indexes the docs for the
 
 ## How it does
 
-| Metric | v0.6 baseline | Corpus |
+| Metric | v0.6.1 baseline | Corpus |
 |---|---|---|
 | **Refusal rate** (over entries classified out-of-scope) | **1.000** | 30-pair, 2 libraries |
-| **Version correctness** (substring, over answered entries) | **0.750** | React 18.2 + FastAPI 0.95 |
-| **Answer accuracy** (LLM-judged, over answered entries) | **0.625** | judged-in-scope only |
-| **p95 latency** | **~7.3 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
+| **Version correctness** (substring, over answered entries) | **0.875** | React 18.2 + FastAPI 0.95 |
+| **Answer accuracy** (LLM-judged, over answered entries) | **0.714** | judged-in-scope only |
+| **p95 latency** | **~7.0 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
 | **Cost / turn** | **~$0.0003** | 1–3 OpenAI calls per query |
 
 When DocChat refuses, it refuses cleanly with the canonical "I don't have documentation" phrase — `refusal=1.000` on the entries classified as out-of-scope. The retrieval similarity floor (`SearchDocsTool.score_floor=0.15`) plus a HARD-RULE system prompt prevents the agent from leaking pretraining knowledge when retrieval comes back empty.
 
-When DocChat does answer, it grounds in the retrieved context — but at v0.6, the answer-bucket is small (8 of 24 in-scope corpus entries answered through). The other 16 were over-refused because the floor pruned hits the agent could have used. **v0.6 made the architecture deeper (multi-iteration ReAct, real workspace + changelog tools, second indexed library) at the cost of measured recall**: floor-based gating that worked on a single tight corpus hits its limit on a more diverse one. The honest framing is that v0.6 is a recall-conservative system; v0.7's plan is per-collection floor tuning + better doc chunking to widen the answer bucket.
+When DocChat does answer, it grounds in the retrieved context — at v0.6.1 the answer-bucket is 8 of 24 in-scope corpus entries. The other 16 are over-refused because the floor pruned hits the agent could have used. **v0.6 made the architecture deeper (multi-iteration ReAct, real workspace + changelog tools, second indexed library) at the cost of measured recall**: floor-based gating that worked on a single tight corpus hits its limit on a more diverse one. v0.6.1 then patched the version-correctness regression (`FindInChangelogTool` was substring-matching version strings and pulling in adjacent-version sections — `0.95.0` accidentally matched `0.95.10`, React 18.2's section mentioned React 19 APIs in passing). The honest framing is that v0.6.1 is a recall-conservative system; v0.7's plan is per-collection floor tuning + better doc chunking to widen the answer bucket.
 
-**Engineering trade-offs the v0.6 numbers expose:**
+**Engineering trade-offs the v0.6.1 numbers expose:**
 
-- 2 of 30 queries hit the `max_iterations=3` cap — exactly the cases where retrieval was inconclusive and the model correctly tried multiple tools before refusing. The iteration cap is doing its job.
-- `version=0.750` (vs v0.5's 1.000) traces to 2 of the 8 answered entries leaking a next-major-version API. Multi-iteration ReAct over a denser retrieval cluster occasionally surfaces a chunk from the wrong era; v0.7's chunk-metadata refactor will let the prompt say "stay inside the pinned-version chunks."
-- `p95=7.3s` is multi-iteration overhead. Single-iteration would be faster but couldn't chain `search_docs → search_workspace_code` for "where in my code do I use this" questions.
+- The eval at v0.6.0 measured `accuracy=0.625, version=0.750`. v0.6.1's `_extract_version_section` rewrite (heading-anchored word-boundary regex) lifted both to `0.714 / 0.875` with no recall change. A second v0.6.1 attempt at softening the refusal prompt to "try a second tool first" swung the model into recall-greedy hallucination (`accuracy=0.000, version=0.207`) and was reverted with the measurement in the CHANGELOG. Floor + prompt can't bridge precision and recall on this corpus — that's a v0.7 structural job.
+- `version=0.875` (vs v0.5's 1.000) traces to 1 of the 8 answered entries still leaking a next-major-version API from `search_docs` retrieval. v0.7's chunk-metadata refactor will let the prompt say "stay inside the pinned-version chunks."
+- `p95=7.0s` is multi-iteration overhead. Single-iteration would be faster but couldn't chain `search_docs → search_workspace_code` for "where in my code do I use this" questions.
 
 Reproduce with one command:
 

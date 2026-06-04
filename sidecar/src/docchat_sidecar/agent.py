@@ -44,9 +44,19 @@ __all__ = ["Agent", "AgentResponse"]
 logger = logging.getLogger(__name__)
 
 
-# v0.6 system prompt. Shape changed from v0.5 because the model now drives
-# tool dispatch via the function-calling API rather than receiving tool
-# output embedded in the system prompt. The HARD RULES still produce the
+# v0.6 system prompt (REVERTED from v0.6.1's softening attempt - that
+# version made the model treat any loose tool output as "useful context"
+# and synthesise wrong-version answers from base knowledge. Eval at
+# v0.6.1 attempt: in_scope=29/30 but accuracy=0.000 and version=0.207
+# because the model dressed up off-topic retrievals into hallucinated
+# answers. Reverted to the stricter v0.6 shape. Recall stays bounded
+# but precision and refusal-correctness are preserved. The prompt-vs-
+# floor recall problem is a v0.7 item that needs a structural fix
+# (per-collection thresholds, chunk metadata) rather than wording).
+#
+# Shape changed from v0.5 because the model now drives tool dispatch
+# via the function-calling API rather than receiving tool output
+# embedded in the system prompt. The HARD RULES still produce the
 # canonical refusal phrase when retrieval is empty so the eval's
 # is_refusal heuristic continues to match.
 _SYSTEM_PROMPT = """You are DocChat, an assistant that answers questions about \
