@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-02
+
+### Added
+- **Per-collection score floors** on `SearchDocsTool`. New `floors_by_library: dict[str, float] | None` kwarg with built-in default `fastapi=0.10` (vs the global 0.15 that works for React). FastAPI tutorial pages dilute cosine to 0.08–0.12 for in-scope queries; the per-library floor recovers ~10 in-scope answers that v0.6 over-refused.
+- **Chunk-metadata version grounding.** `SearchDocsTool.run` now prefixes each retrieved chunk with `## library@version - source` so the LLM has an explicit version anchor in every block. New HARD RULE #4 in the agent system prompt: "Any API you mention must appear in the retrieved chunks for the user's pinned version." Closes the cross-version leak path that capped `version_correctness` at 0.875 through v0.6.1.
+- **Streaming protocol** — three new server-message variants in `protocol.py`:
+  - `AssistantTextDelta { text, chunk_index }` — one streaming token chunk (monotonic index per query).
+  - `AssistantStreamFinal { citations, tool_used, iterations }` — terminator carrying structured citations + agent telemetry.
+  - `CitationRef { library, version, source, source_url? }` — wire-shape mirror of internal `Citation`, with `source_url` reserved for v0.7.1's click-to-open.
+- **`SettingsUpdate`** client-message — runtime knobs for `chat_model`, `score_floor`, `max_iterations`. Stored in a module-local dict on the sidecar; agent reads on every query. No respawn needed to change a setting.
+- **`Agent.answer_stream(query)`** new async generator method that uses `chat.completions.create(stream=True)` and accumulates partial tool_call chunks via the OpenAI streaming protocol. `Agent.answer()` is preserved unchanged so the eval harness keeps producing comparable numbers across milestones.
+- **`__main__.py`** routes `user_query` through `agent.answer_stream()` and emits each event over the WebSocket.
+- **Webview** handles `assistant_text_delta` (accumulate into the current bot bubble) and `assistant_stream_final` (footer with `iterations` + `tool_used` + citation count).
+- 6 new tests: `test_search_docs_fastapi_default_floor_is_lower_than_react`, `test_search_docs_floors_by_library_override_kwarg`, `test_search_docs_chunk_text_carries_library_and_version_prefix` (tools), `test_assistant_text_delta_round_trip`, `test_assistant_stream_final_round_trip`, `test_settings_update_round_trip_partial`, `test_settings_update_round_trip_full` (protocol), `test_agent_answer_stream_yields_deltas_and_final` (agent).
+
+### Changed
+- `extension/package.json` + `sidecar/pyproject.toml` bumped to `0.7.0`.
+- `extension/webview/index.html` header reads `v0.7`.
+- Lifecycle test accepts either `assistant_text` or `assistant_text_delta` as the first reply (depends on whether `OPENAI_API_KEY` is configured).
+
+### Measured numbers on the 30-pair corpus
+```
+n=30 (in_scope=18, oos=12)  accuracy=0.882  version=0.944  refusal=1.000  p95=11252ms
+```
+Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope` more than doubled.
+
+### Scope, documented
+- Click-to-open citations and the settings UI drawer were on the v0.7 plan but trimmed mid-milestone after the retrieval changes landed clean numbers. The wire protocol (`CitationRef.source_url`, `SettingsUpdate`) is already in place; v0.7.1 is purely webview/extension JS+TS work. Shipping a focused v0.7 with measured wins beat a sprawling diff that risked regressing what just landed — same lesson v0.6.1 taught.
+
 ## [0.6.1] - 2026-06-02
 
 ### Fixed
@@ -108,7 +137,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AshwinUgale/docchat/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/AshwinUgale/docchat/compare/v0.4.0...v0.5.0

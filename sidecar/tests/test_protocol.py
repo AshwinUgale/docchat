@@ -6,13 +6,17 @@ import pytest
 from pydantic import ValidationError
 
 from docchat_sidecar.protocol import (
+    AssistantStreamFinal,
     AssistantText,
+    AssistantTextDelta,
+    CitationRef,
     IndexComplete,
     IndexError,
     IndexLibrary,
     IndexProgress,
     Ping,
     Pong,
+    SettingsUpdate,
     UserQuery,
     client_adapter,
     server_adapter,
@@ -72,6 +76,51 @@ def test_index_error_round_trip() -> None:
     parsed = server_adapter.validate_json(server_adapter.dump_json(err))
     assert isinstance(parsed, IndexError)
     assert "404" in parsed.message
+
+
+def test_assistant_text_delta_round_trip() -> None:
+    """v0.7: per-token streaming chunk."""
+    delta = AssistantTextDelta(text="useState ", chunk_index=3)
+    parsed = server_adapter.validate_json(server_adapter.dump_json(delta))
+    assert isinstance(parsed, AssistantTextDelta)
+    assert parsed.text == "useState "
+    assert parsed.chunk_index == 3
+
+
+def test_assistant_stream_final_round_trip() -> None:
+    """v0.7: stream terminator with citations + tool + iteration count."""
+    final = AssistantStreamFinal(
+        citations=[
+            CitationRef(library="react", version="18.2.0", source="useState.md"),
+        ],
+        tool_used="search_docs",
+        iterations=2,
+    )
+    parsed = server_adapter.validate_json(server_adapter.dump_json(final))
+    assert isinstance(parsed, AssistantStreamFinal)
+    assert parsed.iterations == 2
+    assert parsed.tool_used == "search_docs"
+    assert len(parsed.citations) == 1
+    assert parsed.citations[0].source == "useState.md"
+
+
+def test_settings_update_round_trip_partial() -> None:
+    """v0.7: settings_update accepts any subset of the known knobs."""
+    msg = SettingsUpdate(score_floor=0.10)
+    parsed = client_adapter.validate_json(client_adapter.dump_json(msg))
+    assert isinstance(parsed, SettingsUpdate)
+    assert parsed.score_floor == 0.10
+    assert parsed.chat_model is None
+    assert parsed.max_iterations is None
+
+
+def test_settings_update_round_trip_full() -> None:
+    msg = SettingsUpdate(chat_model="gpt-4o", score_floor=0.20, max_iterations=4)
+    parsed = client_adapter.validate_json(client_adapter.dump_json(msg))
+    assert isinstance(parsed, SettingsUpdate)
+    assert parsed.chat_model == "gpt-4o"
+    assert parsed.score_floor == 0.20
+    assert parsed.max_iterations == 4
 
 
 def test_unknown_type_rejected() -> None:

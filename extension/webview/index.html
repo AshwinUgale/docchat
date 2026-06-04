@@ -127,7 +127,7 @@
 </head>
 <body>
   <header>
-    <span>DocChat <span style="opacity: 0.6;">v0.2</span></span>
+    <span>DocChat <span style="opacity: 0.6;">v0.7</span></span>
     <span style="display: flex; align-items: center; gap: 10px;">
       <button id="indexBtn" type="button" disabled>Index React 18.2</button>
       <span id="status">connecting…</span>
@@ -154,12 +154,49 @@
 
     let ws = null;
     let indexing = false;
+    // v0.7: while a stream is in progress, all assistant_text_delta frames
+    // append to this same bubble. Reset on assistant_stream_final or on
+    // the start of a new user message.
+    let activeStreamBubble = null;
 
     function append(role, text) {
       const div = document.createElement("div");
       div.className = "msg " + role;
       div.textContent = text;
       log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+      return div;
+    }
+
+    function appendStreamDelta(text) {
+      if (!activeStreamBubble) {
+        activeStreamBubble = append("bot", "");
+      }
+      activeStreamBubble.textContent += text;
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function finalizeStream(final) {
+      // The bubble already has the full text streamed in. Add a small
+      // footer with the tool used + iteration count so the demo surfaces
+      // the agent's actual path. v0.7.1 will render citations as
+      // clickable spans that open the source URL in the browser.
+      if (!activeStreamBubble) {
+        // The agent returned a final without any deltas (e.g. iteration
+        // cap with no content). Create a bubble for the footer.
+        activeStreamBubble = append("bot", "");
+      }
+      const footer = document.createElement("div");
+      footer.style.fontSize = "0.8em";
+      footer.style.opacity = "0.6";
+      footer.style.marginTop = "6px";
+      const citeCount = final.citations ? final.citations.length : 0;
+      const iterPart = `${final.iterations} iteration${final.iterations === 1 ? "" : "s"}`;
+      const toolPart = `via ${final.tool_used}`;
+      const citePart = citeCount > 0 ? `, ${citeCount} citation${citeCount === 1 ? "" : "s"}` : "";
+      footer.textContent = `— ${iterPart}, ${toolPart}${citePart}`;
+      activeStreamBubble.appendChild(footer);
+      activeStreamBubble = null;
       log.scrollTop = log.scrollHeight;
     }
 
@@ -194,7 +231,19 @@
     function handleServerMessage(msg) {
       switch (msg.type) {
         case "assistant_text":
+          // Non-streaming path (errors, simple replies). If a stream is
+          // in flight when this lands, close it out first so the next
+          // bubble starts clean.
+          if (activeStreamBubble) {
+            activeStreamBubble = null;
+          }
           append("bot", msg.text);
+          break;
+        case "assistant_text_delta":
+          appendStreamDelta(msg.text);
+          break;
+        case "assistant_stream_final":
+          finalizeStream(msg);
           break;
         case "index_progress": {
           if (!indexing) {
@@ -276,6 +325,8 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
+      // Reset stream bubble tracker so the next agent response starts fresh.
+      activeStreamBubble = null;
       append("user", text);
       send({ type: "user_query", text });
       input.value = "";

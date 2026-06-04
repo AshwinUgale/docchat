@@ -2,7 +2,7 @@
   "name": "docchat",
   "displayName": "DocChat",
   "description": "Ask questions about your project's libraries at the exact versions your project pins.",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publisher": "ashwinugale",
   "license": "MIT",
   "engines": {

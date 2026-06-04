@@ -172,6 +172,69 @@ async def test_search_docs_score_floor_is_configurable() -> None:
     assert "No relevant chunks" in result.text
 
 
+async def test_search_docs_fastapi_default_floor_is_lower_than_react() -> None:
+    """v0.7: FastAPI's tutorial pages dilute cosine scores; default
+    floor=0.10 for fastapi (vs 0.15 for react). A hit at 0.12 should pass
+    for fastapi but fail for react."""
+    qdrant = _fake_qdrant_with_hits(
+        [{"text": "FastAPI Depends chunk.", "source_url": "https://x/depends.md"}],
+        scores=[0.12],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(qdrant=qdrant, openai=openai)
+
+    # fastapi: passes (0.12 >= 0.10).
+    result_fa = await tool.run(library="fastapi", version="0.95.0", query="how Depends?")
+    assert "FastAPI Depends chunk" in result_fa.text
+
+    # react: drops (0.12 < 0.15). Need a fresh fake since query_points is one-shot.
+    qdrant2 = _fake_qdrant_with_hits(
+        [{"text": "FastAPI Depends chunk.", "source_url": "https://x/depends.md"}],
+        scores=[0.12],
+    )
+    tool2 = SearchDocsTool(qdrant=qdrant2, openai=openai)
+    result_r = await tool2.run(library="react", version="18.2.0", query="how Depends?")
+    assert "No relevant chunks" in result_r.text
+
+
+async def test_search_docs_floors_by_library_override_kwarg() -> None:
+    """The floors_by_library kwarg lets a caller override per-library defaults."""
+    qdrant = _fake_qdrant_with_hits(
+        [{"text": "Mid chunk.", "source_url": "https://x/m.md"}],
+        scores=[0.20],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(
+        qdrant=qdrant,
+        openai=openai,
+        floors_by_library={"react": 0.30},
+    )
+    # React's floor was bumped to 0.30; hit at 0.20 gets dropped.
+    result = await tool.run(library="react", version="18.2.0", query="x")
+    assert "No relevant chunks" in result.text
+
+
+async def test_search_docs_chunk_text_carries_library_and_version_prefix() -> None:
+    """v0.7: chunk headers include library@version so the LLM has an
+    explicit anchor for version grounding."""
+    qdrant = _fake_qdrant_with_hits(
+        [
+            {
+                "text": "useState returns a tuple.",
+                "source_url": "https://x/useState.md",
+                "library": "react",
+                "version": "18.2.0",
+            }
+        ],
+        scores=[0.55],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(qdrant=qdrant, openai=openai)
+    result = await tool.run(library="react", version="18.2.0", query="useState")
+    assert "react@18.2.0" in result.text
+    assert "useState.md" in result.text
+
+
 # ---------------------------------------------------------------------------
 # Stub tools
 # ---------------------------------------------------------------------------

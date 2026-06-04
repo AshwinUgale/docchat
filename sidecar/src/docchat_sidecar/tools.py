@@ -99,6 +99,7 @@ class SearchDocsTool:
         embed_model: str = "text-embedding-3-small",
         top_k: int = 5,
         score_floor: float = 0.15,
+        floors_by_library: dict[str, float] | None = None,
     ) -> None:
         self._qdrant = qdrant
         self._openai = openai
@@ -113,6 +114,21 @@ class SearchDocsTool:
         # Vite / Node EADDRINUSE / let-vs-const) whose top hits clustered
         # below 0.15. See ADR-008.
         self._score_floor = score_floor
+        # v0.7: per-library floor overrides. FastAPI's tutorial pages are
+        # bigger / more varied than React's hook reference; eval at v0.6
+        # showed many in-scope FastAPI queries landing at top-hit scores
+        # of 0.08-0.12 (below the React-tuned 0.15 default), driving the
+        # over-refusal that capped recall at 8/24 in-scope answered. A
+        # lower default for fastapi recovers some of that without affecting
+        # React's precision. Callers (eval harness, settings UI) can
+        # override via the kwarg.
+        self._floors_by_library: dict[str, float] = {
+            "fastapi": 0.10,
+            **(floors_by_library or {}),
+        }
+
+    def _floor_for(self, library: str) -> float:
+        return self._floors_by_library.get(library.lower(), self._score_floor)
 
     async def run(self, *, library: str, version: str, query: str) -> ToolResult:
         collection = collection_name_for(library, version)
@@ -136,21 +152,34 @@ class SearchDocsTool:
         raw_hits = query_response.points
         # v0.5: drop low-confidence hits. The agent prompt then refuses
         # cleanly on the empty result rather than hallucinating from base
-        # knowledge.
-        hits = [h for h in raw_hits if getattr(h, "score", 0.0) >= self._score_floor]
+        # knowledge. v0.7: per-library floor override (see __init__).
+        floor = self._floor_for(library)
+        hits = [h for h in raw_hits if getattr(h, "score", 0.0) >= floor]
         if not hits:
             return ToolResult(text=f"No relevant chunks found for {query!r}.")
         text_parts: list[str] = []
         citations: list[Citation] = []
         seen_sources: set[str] = set()
+        # v0.7: prefix each chunk with the pinned library@version. Combined
+        # with the agent's "any API you mention must appear in retrieved
+        # chunks" prompt rule, this gives the LLM an explicit version
+        # anchor in every retrieval block and closes the leak path where
+        # the model would synthesise across versions.
         for hit in hits:
             payload = hit.payload or {}
             chunk_text = payload.get("text", "")
             source_url = payload.get("source_url", "")
             source_label = source_url.rsplit("/", 1)[-1] if source_url else "doc"
-            text_parts.append(f"## {source_label}\n\n{chunk_text}")
+            # Use the payload's library + version (what was actually
+            # indexed), not the caller's args, so a misdispatched tool
+            # call still gets honest provenance.
+            payload_lib = payload.get("library", library)
+            payload_ver = payload.get("version", version)
+            text_parts.append(f"## {payload_lib}@{payload_ver} - {source_label}\n\n{chunk_text}")
             if source_label not in seen_sources:
-                citations.append(Citation(library=library, version=version, source=source_label))
+                citations.append(
+                    Citation(library=payload_lib, version=payload_ver, source=source_label)
+                )
                 seen_sources.add(source_label)
         return ToolResult(text="\n\n---\n\n".join(text_parts), citations=citations)
 

@@ -4,9 +4,9 @@
 
 [![status](https://img.shields.io/badge/status-alpha-orange)](#)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![version](https://img.shields.io/badge/version-0.5.0-blue)](./CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.7.0-blue)](./CHANGELOG.md)
 
-**Status:** v0.5 — packaged `.vsix`, eval harness with published numbers. Marketplace publish at v1.0.
+**Status:** v0.7 — multi-iteration ReAct over two indexed libraries (React 18.2 + FastAPI 0.95), streaming responses, eval-measured precision/recall recovery. Marketplace publish at v1.0.
 
 ---
 
@@ -20,23 +20,41 @@ DocChat fixes this. It parses your project's lockfiles, indexes the docs for the
 
 ## How it does
 
-| Metric | v0.6.1 baseline | Corpus |
+| Metric | v0.7 baseline | Corpus |
 |---|---|---|
-| **Refusal rate** (over entries classified out-of-scope) | **1.000** | 30-pair, 2 libraries |
-| **Version correctness** (substring, over answered entries) | **0.875** | React 18.2 + FastAPI 0.95 |
-| **Answer accuracy** (LLM-judged, over answered entries) | **0.714** | judged-in-scope only |
-| **p95 latency** | **~7.0 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
-| **Cost / turn** | **~$0.0003** | 1–3 OpenAI calls per query |
+| **Answer accuracy** (LLM-judged, over answered entries) | **0.882** | React 18.2 + FastAPI 0.95 |
+| **Version correctness** (substring, over answered entries) | **0.944** | 30-pair, 2 libraries |
+| **Refusal rate** (over entries classified out-of-scope) | **1.000** | 6 true oos + retrieval-gated |
+| **In-scope answered** | **18 of 24** | corpus-in-scope |
+| **p95 latency** | **~11 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
+| **Cost / turn** | **~$0.0003** | 1–3 streamed OpenAI calls per query |
 
-When DocChat refuses, it refuses cleanly with the canonical "I don't have documentation" phrase — `refusal=1.000` on the entries classified as out-of-scope. The retrieval similarity floor (`SearchDocsTool.score_floor=0.15`) plus a HARD-RULE system prompt prevents the agent from leaking pretraining knowledge when retrieval comes back empty.
+Best numbers in the project. v0.7's two structural changes pulled them up from v0.6.1's `accuracy=0.714 / version=0.875 / in_scope=8`:
 
-When DocChat does answer, it grounds in the retrieved context — at v0.6.1 the answer-bucket is 8 of 24 in-scope corpus entries. The other 16 are over-refused because the floor pruned hits the agent could have used. **v0.6 made the architecture deeper (multi-iteration ReAct, real workspace + changelog tools, second indexed library) at the cost of measured recall**: floor-based gating that worked on a single tight corpus hits its limit on a more diverse one. v0.6.1 then patched the version-correctness regression (`FindInChangelogTool` was substring-matching version strings and pulling in adjacent-version sections — `0.95.0` accidentally matched `0.95.10`, React 18.2's section mentioned React 19 APIs in passing). The honest framing is that v0.6.1 is a recall-conservative system; v0.7's plan is per-collection floor tuning + better doc chunking to widen the answer bucket.
+- **Per-collection score floors.** `SearchDocsTool.floors_by_library = {"fastapi": 0.10}` overrides the global 0.15 default for FastAPI's bigger doc pages, whose in-scope queries cluster at 0.08–0.12 cosine similarity. This single change lifted `in_scope` from 8 → 18.
+- **Chunk-metadata version grounding.** Each retrieved chunk is now prefixed with `## library@version - source`, and the agent's HARD RULE #4 says "any API you mention must appear in the retrieved chunks for the pinned version." This closed the last leak path that capped `version_correctness` at 0.875.
 
-**Engineering trade-offs the v0.6.1 numbers expose:**
+Streaming (token-by-token via OpenAI `stream=True`) masks the multi-iteration overhead so the first tokens land in <1s even when the full answer takes 11s.
 
-- The eval at v0.6.0 measured `accuracy=0.625, version=0.750`. v0.6.1's `_extract_version_section` rewrite (heading-anchored word-boundary regex) lifted both to `0.714 / 0.875` with no recall change. A second v0.6.1 attempt at softening the refusal prompt to "try a second tool first" swung the model into recall-greedy hallucination (`accuracy=0.000, version=0.207`) and was reverted with the measurement in the CHANGELOG. Floor + prompt can't bridge precision and recall on this corpus — that's a v0.7 structural job.
-- `version=0.875` (vs v0.5's 1.000) traces to 1 of the 8 answered entries still leaking a next-major-version API from `search_docs` retrieval. v0.7's chunk-metadata refactor will let the prompt say "stay inside the pinned-version chunks."
-- `p95=7.0s` is multi-iteration overhead. Single-iteration would be faster but couldn't chain `search_docs → search_workspace_code` for "where in my code do I use this" questions.
+Reproduce with one command:
+
+```powershell
+docker compose up -d qdrant
+$env:PYTHONPATH = "$PWD;$PWD\sidecar\src"
+uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --output ..\out\eval.json
+```
+
+**Engineering iteration the eval drove:**
+
+| Version | accuracy | version | in_scope | what changed |
+|---|---|---|---|---|
+| v0.4 | 0.688 | 0.800 | 8 / 16 | first measurement, no refusal discipline |
+| v0.5 | 0.800 | 1.000 | 7 / 16 | retrieval floor + canonical refusal phrase |
+| v0.6 | 0.625 | 0.750 | 8 / 24 | multi-iter ReAct + FastAPI: regressed |
+| v0.6.1 | 0.714 | 0.875 | 8 / 24 | changelog regex fix |
+| **v0.7** | **0.882** | **0.944** | **18 / 24** | per-library floors + version anchoring |
+
+The portfolio narrative is the iteration, not just the final number. Every regression got measured, named, and patched — including a v0.6.1 prompt-softening attempt that was tried and reverted with eval data ([see CHANGELOG](./CHANGELOG.md)).
 
 Reproduce with one command:
 
@@ -50,13 +68,13 @@ The corpus + runner + LLM judge live in [`evals/`](./evals/).
 
 ---
 
-## Install (v0.5)
+## Install (v0.7)
 
 The `.vsix` ships as a release artifact on GitHub. Marketplace publish lands at v1.0.
 
 ```powershell
-# Download docchat-0.5.0.vsix from the GitHub Releases page, then:
-code --install-extension docchat-0.5.0.vsix
+# Download docchat-0.7.0.vsix from the GitHub Releases page, then:
+code --install-extension docchat-0.7.0.vsix
 ```
 
 Python 3.11+ on PATH is required (the extension spawns a sidecar). Docker is required for Qdrant (vector store):
@@ -138,9 +156,10 @@ To run the extension in a dev host: open `extension/` in VS Code and press **F5*
 
 ## Roadmap
 
-- **v0.5** (current) — `.vsix` artifact, retrieval similarity floor, hard-refusal prompt, eval harness with headline numbers
-- **v0.6** — multi-iteration ReAct, real `search_workspace_code` and `find_in_changelog` tools, FastAPI 0.95 corpus
-- **v1.0** — Marketplace publish, settings UI, self-critique pass, 150-pair × 5-library eval corpus
+- **v0.7** (current) — per-collection retrieval floors, chunk-metadata version grounding, streaming responses, best eval numbers in the project
+- **v0.7.1** — webview click-to-open citations + settings UI drawer (protocol already in place at v0.7)
+- **v0.8** — chunk-level metadata refactor, third indexed library, self-critique pass
+- **v1.0** — Marketplace publish, auto-install sidecar, 150-pair × 5-library eval corpus
 
 ---
 

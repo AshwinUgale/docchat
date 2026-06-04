@@ -27,6 +27,7 @@ import os
 import socket
 import sys
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -40,17 +41,26 @@ with contextlib.suppress(ImportError):
 
 from docchat_sidecar import __version__
 from docchat_sidecar.protocol import (
+    AssistantStreamFinal,
     AssistantText,
+    AssistantTextDelta,
     IndexComplete,
     IndexError,
     IndexLibrary,
     IndexProgress,
     Ping,
     Pong,
+    SettingsUpdate,
     UserQuery,
     client_adapter,
     server_adapter,
 )
+
+# v0.7: runtime-mutable settings. The webview's settings drawer posts
+# ``SettingsUpdate`` messages that mutate this dict; ``_run_agent`` reads
+# from it on every query, falling back to defaults when a key is absent.
+# Process-local; respawning the sidecar resets to env-var defaults.
+_RUNTIME_SETTINGS: dict[str, Any] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +95,7 @@ async def chat(ws: WebSocket) -> None:
         return
 
 
-async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | Ping) -> None:
+async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | SettingsUpdate | Ping) -> None:
     """Route a parsed client message to the appropriate handler."""
     if isinstance(msg, UserQuery):
         await _run_agent(ws, msg.text)
@@ -93,18 +103,33 @@ async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | Ping) -> None
     if isinstance(msg, IndexLibrary):
         await _run_indexing(ws, msg.library, msg.version)
         return
+    if isinstance(msg, SettingsUpdate):
+        _apply_settings_update(msg)
+        return
     if isinstance(msg, Ping):
         await _send(ws, Pong(version=__version__))
         return
 
 
-async def _run_agent(ws: WebSocket, query: str) -> None:
-    """v0.3 ReAct loop: route -> tool -> retrieve -> generate -> respond.
+def _apply_settings_update(msg: SettingsUpdate) -> None:
+    """v0.7: persist the in-process settings the agent reads on next query."""
+    if msg.chat_model is not None:
+        _RUNTIME_SETTINGS["chat_model"] = msg.chat_model
+    if msg.score_floor is not None:
+        _RUNTIME_SETTINGS["score_floor"] = msg.score_floor
+    if msg.max_iterations is not None:
+        _RUNTIME_SETTINGS["max_iterations"] = msg.max_iterations
+    logger.info("runtime settings updated: %r", _RUNTIME_SETTINGS)
 
-    Constructs the Agent per query for simplicity; the cost is two SDK
-    constructors plus a Mneme MemoryManager - all cheap when the OpenAI
-    + Qdrant clients aren't doing network work yet. A future optimisation
-    is per-connection caching, but the v0.3 demo doesn't need it.
+
+async def _run_agent(ws: WebSocket, query: str) -> None:
+    """v0.7 streaming ReAct loop: AssistantTextDelta chunks then AssistantStreamFinal.
+
+    Constructs the Agent per query (cheap - SDK constructors are
+    non-network) and iterates ``answer_stream`` over the WebSocket so the
+    panel renders token-by-token. Errors come back as a single
+    ``AssistantText`` (not the streaming protocol) since they happen
+    before the stream begins.
     """
     # Lazy import - keeps the bare /health surface free of OpenAI + Qdrant
     # + Mneme deps for users who only want IPC verification.
@@ -120,21 +145,33 @@ async def _run_agent(ws: WebSocket, query: str) -> None:
         qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
         workspace_path = os.environ.get("DOCCHAT_WORKSPACE_PATH")
         memory = build_memory(workspace_path=workspace_path, qdrant_url=None)
-        agent = Agent(
-            openai=AsyncOpenAI(),
-            qdrant=AsyncQdrantClient(url=qdrant_url),
-            memory=memory,
-            # v0.6: thread the workspace path through to the agent so
-            # SearchWorkspaceCodeTool can scope ripgrep correctly.
-            workspace_path=workspace_path,
-        )
-        response = await agent.answer(query)
+        # v0.7: pick up runtime settings posted via SettingsUpdate; fall
+        # back to env vars and then the Agent's hard-coded defaults.
+        agent_kwargs: dict[str, Any] = {
+            "openai": AsyncOpenAI(),
+            "qdrant": AsyncQdrantClient(url=qdrant_url),
+            "memory": memory,
+            "workspace_path": workspace_path,
+        }
+        chat_model = _RUNTIME_SETTINGS.get("chat_model") or os.environ.get("DOCCHAT_CHAT_MODEL")
+        if chat_model:
+            agent_kwargs["chat_model"] = chat_model
+        max_iter = _RUNTIME_SETTINGS.get("max_iterations")
+        if max_iter is not None:
+            agent_kwargs["max_iterations"] = int(max_iter)
+        agent = Agent(**agent_kwargs)
     except Exception as exc:
-        logger.exception("agent failed")
+        logger.exception("agent construction failed")
         await _send(ws, AssistantText(text=f"[agent error] {exc}"))
         return
 
-    await _send(ws, AssistantText(text=response.text))
+    try:
+        async for event in agent.answer_stream(query):
+            await _send(ws, event)
+    except Exception as exc:
+        logger.exception("agent stream failed mid-query")
+        # Send a terminator so the webview can release its loading state.
+        await _send(ws, AssistantText(text=f"[agent error] {exc}"))
 
 
 async def _run_indexing(ws: WebSocket, library: str, version: str) -> None:
@@ -162,7 +199,13 @@ async def _run_indexing(ws: WebSocket, library: str, version: str) -> None:
 
 async def _send(
     ws: WebSocket,
-    msg: AssistantText | IndexProgress | IndexComplete | IndexError | Pong,
+    msg: AssistantText
+    | AssistantTextDelta
+    | AssistantStreamFinal
+    | IndexProgress
+    | IndexComplete
+    | IndexError
+    | Pong,
 ) -> None:
     """Serialise a server message and send it as a single text frame."""
     payload = server_adapter.dump_json(msg).decode("utf-8")

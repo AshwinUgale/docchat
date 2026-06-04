@@ -20,15 +20,18 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 __all__ = [
+    "AssistantStreamFinal",
     "AssistantText",
+    "AssistantTextDelta",
+    "CitationRef",
     "ClientMessage",
     "IndexComplete",
     "IndexError",
     "IndexLibrary",
-    "IndexProgress",
     "Ping",
     "Pong",
     "ServerMessage",
+    "SettingsUpdate",
     "UserQuery",
     "client_adapter",
     "server_adapter",
@@ -55,6 +58,19 @@ class IndexLibrary(BaseModel):
     version: str
 
 
+class SettingsUpdate(BaseModel):
+    """User changed a setting in the panel. Sidecar re-reads on next query.
+
+    v0.7: chat_model, score_floor, max_iterations are the surfaced knobs.
+    All optional - omitted fields keep their current value.
+    """
+
+    type: Literal["settings_update"] = "settings_update"
+    chat_model: str | None = None
+    score_floor: float | None = None
+    max_iterations: int | None = None
+
+
 class Ping(BaseModel):
     """Health-check ping from the client. Server replies with Pong."""
 
@@ -66,11 +82,58 @@ class Ping(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class CitationRef(BaseModel):
+    """Citation as carried over the wire.
+
+    Mirrors the internal ``tools.Citation`` shape plus a ``source_url``
+    for click-to-open. Kept separate from the Python dataclass so the
+    protocol stays stable as the internal type evolves.
+    """
+
+    library: str
+    version: str
+    source: str
+    source_url: str | None = None
+
+
 class AssistantText(BaseModel):
-    """A response chunk (full message in v0.2; streaming chunks in v0.3)."""
+    """A complete response in one frame.
+
+    Used for: error messages, refusals, the (rare) non-streaming path.
+    For the streaming agent path at v0.7, use ``AssistantTextDelta``
+    followed by ``AssistantStreamFinal``.
+    """
 
     type: Literal["assistant_text"] = "assistant_text"
     text: str
+
+
+class AssistantTextDelta(BaseModel):
+    """One streaming chunk of the assistant's answer.
+
+    v0.7: emitted as the LLM streams tokens. The webview accumulates
+    these into the current message bubble. ``chunk_index`` is monotonic
+    per query so the webview can detect out-of-order delivery.
+    """
+
+    type: Literal["assistant_text_delta"] = "assistant_text_delta"
+    text: str
+    chunk_index: int
+
+
+class AssistantStreamFinal(BaseModel):
+    """Terminates a stream of AssistantTextDelta frames for one query.
+
+    v0.7: carries the citation list separately from the streamed text so
+    the panel can render clickable citation tokens after the message
+    text fully arrives. ``tool_used`` and ``iterations`` are exposed for
+    UI affordances ("via search_docs, 2 iterations").
+    """
+
+    type: Literal["assistant_stream_final"] = "assistant_stream_final"
+    citations: list[CitationRef] = Field(default_factory=list)
+    tool_used: str
+    iterations: int
 
 
 class IndexProgress(BaseModel):
@@ -118,13 +181,19 @@ class Pong(BaseModel):
 # ---------------------------------------------------------------------------
 
 ClientMessage = Annotated[
-    UserQuery | IndexLibrary | Ping,
+    UserQuery | IndexLibrary | SettingsUpdate | Ping,
     Field(discriminator="type"),
 ]
 """Anything the extension can send to the sidecar."""
 
 ServerMessage = Annotated[
-    AssistantText | IndexProgress | IndexComplete | IndexError | Pong,
+    AssistantText
+    | AssistantTextDelta
+    | AssistantStreamFinal
+    | IndexProgress
+    | IndexComplete
+    | IndexError
+    | Pong,
     Field(discriminator="type"),
 ]
 """Anything the sidecar can send to the extension."""

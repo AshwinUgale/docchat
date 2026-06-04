@@ -239,6 +239,113 @@ async def test_agent_caps_at_max_iterations() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# v0.7 streaming - answer_stream() yields AssistantTextDelta then AssistantStreamFinal
+# ---------------------------------------------------------------------------
+
+
+class _FakeStream:
+    """Async iterator that yields a pre-baked list of MagicMock chunks."""
+
+    def __init__(self, chunks: list[object]) -> None:
+        self._chunks = iter(chunks)
+
+    def __aiter__(self) -> _FakeStream:
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+def _stream_chunk_tool_call(*, tool_name: str, tool_args_json: str) -> object:
+    """One chunk carrying a partial tool_call (the full tool_call in one chunk
+    is the simplest case OpenAI returns at low temperature)."""
+    chunk = MagicMock()
+    delta = MagicMock()
+    delta.content = None
+    tc = MagicMock()
+    tc.index = 0
+    tc.id = "call_stream_1"
+    tc.function = MagicMock()
+    tc.function.name = tool_name
+    tc.function.arguments = tool_args_json
+    delta.tool_calls = [tc]
+    chunk.choices = [MagicMock(delta=delta)]
+    return chunk
+
+
+def _stream_chunk_text(text: str) -> object:
+    chunk = MagicMock()
+    delta = MagicMock()
+    delta.content = text
+    delta.tool_calls = None
+    chunk.choices = [MagicMock(delta=delta)]
+    return chunk
+
+
+def _fake_openai_streaming(*, tool_args_json: str, final_chunks: list[str]) -> MagicMock:
+    """Streaming OpenAI: iter 0 returns one tool_call chunk; iter 1+ stream text."""
+    client = MagicMock()
+    call_count = {"n": 0}
+
+    async def embed(*, model: str, input: list[str]) -> object:
+        del model
+        response = MagicMock()
+        response.data = [MagicMock(embedding=[0.0] * 1536) for _ in input]
+        return response
+
+    async def chat(**kwargs: object) -> object:
+        del kwargs
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return _FakeStream(
+                [_stream_chunk_tool_call(tool_name="search_docs", tool_args_json=tool_args_json)]
+            )
+        return _FakeStream([_stream_chunk_text(t) for t in final_chunks])
+
+    client.embeddings = MagicMock()
+    client.embeddings.create = embed
+    client.chat = MagicMock()
+    client.chat.completions = MagicMock()
+    client.chat.completions.create = chat
+    return client
+
+
+async def test_agent_answer_stream_yields_deltas_and_final() -> None:
+    """v0.7 answer_stream: text chunks land as AssistantTextDelta, terminator
+    as AssistantStreamFinal carrying citations + tool_used + iterations."""
+    from docchat_sidecar.protocol import AssistantStreamFinal, AssistantTextDelta
+
+    openai = _fake_openai_streaming(
+        tool_args_json=json.dumps({"library": "react", "version": "18.2.0", "query": "x"}),
+        final_chunks=["useState ", "returns ", "a tuple."],
+    )
+    qdrant = _fake_qdrant_with_one_hit()
+    memory = _build_memory()
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+
+    events: list[object] = [evt async for evt in agent.answer_stream("how use useState?")]
+
+    deltas = [e for e in events if isinstance(e, AssistantTextDelta)]
+    finals = [e for e in events if isinstance(e, AssistantStreamFinal)]
+
+    # Three text chunks streamed + one citation block delta = 4.
+    assert len(deltas) == 4
+    text = "".join(d.text for d in deltas)
+    assert "useState returns a tuple." in text
+    assert "Sources:" in text
+    # Monotonic chunk_index.
+    assert [d.chunk_index for d in deltas] == [0, 1, 2, 3]
+    # Exactly one terminator with the right shape.
+    assert len(finals) == 1
+    assert finals[0].tool_used == "search_docs"
+    assert finals[0].iterations == 2
+    assert len(finals[0].citations) == 1
+
+
 async def test_agent_passes_workspace_path_to_tool() -> None:
     """The Agent's workspace_path kwarg should reach the workspace tool."""
     qdrant = _fake_qdrant_with_one_hit()

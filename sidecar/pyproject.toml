@@ -1,6 +1,6 @@
 [project]
 name = "docchat-sidecar"
-version = "0.6.1"
+version = "0.7.0"
 description = "DocChat sidecar - FastAPI WebSocket agent loop. Spawned by the VS Code extension."
 readme = "../README.md"
 requires-python = ">=3.11"

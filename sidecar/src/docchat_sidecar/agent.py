@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,11 @@ from qdrant_client import AsyncQdrantClient
 from toolpicker import FunctionSchemaSource, ToolPicker
 
 from docchat_sidecar.memory import WorkspaceMemory
+from docchat_sidecar.protocol import (
+    AssistantStreamFinal,
+    AssistantTextDelta,
+    CitationRef,
+)
 from docchat_sidecar.tools import (
     Citation,
     FindInChangelogTool,
@@ -40,6 +46,9 @@ from docchat_sidecar.tools import (
 )
 
 __all__ = ["Agent", "AgentResponse"]
+
+# Server-message events the streaming agent can emit per query.
+StreamEvent = AssistantTextDelta | AssistantStreamFinal
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +93,13 @@ answer, refuse.
 fabricate APIs, signatures, or behaviour. If the retrieved context only \
 partially covers the question, answer the covered part and explicitly say \
 what's not covered.
+4. VERSION GROUNDING (v0.7): retrieved chunks are prefixed with their \
+library@version (e.g. "## react@18.2.0 - useState.md"). Any API name or \
+signature you put in your answer MUST appear in the retrieved chunks for \
+the user's pinned version. If the right answer would require an API only \
+available in a newer version (e.g. React 19's use(promise), FastAPI \
+0.100+'s Pydantic-v2 model_dump), say so explicitly - do NOT silently \
+use the newer API as if it were available in the pinned version.
 
 When citing, refer to source filenames as they appear in the retrieved \
 context. Keep responses concise unless the user asks for depth."""
@@ -292,6 +308,163 @@ class Agent:
             citations=_dedupe_citations(citations),
             tool_used=tool_used,
             iterations=iterations,
+        )
+
+    async def answer_stream(self, query: str) -> AsyncIterator[StreamEvent]:
+        """Run one query and yield streaming protocol events.
+
+        v0.7: same multi-iteration ReAct loop as ``answer()`` but uses
+        OpenAI's ``stream=True`` so the final text response arrives as
+        ``AssistantTextDelta`` chunks. Tool-call iterations don't emit
+        deltas (the model returns tool_calls only when ``tool_choice``
+        is required/auto and it decides to dispatch). The terminal frame
+        is ``AssistantStreamFinal`` with citations + tool_used + iterations.
+
+        ``answer()`` is preserved unchanged for the eval harness; both
+        share the same dispatch + memory paths.
+        """
+        candidate_names = [s.id for s in self._picker.select(query, k=10)]
+        if not candidate_names:
+            candidate_names = list(self._tools_by_name.keys())
+        tool_specs = self._openai_tool_specs(candidate_names)
+        past_turns = self._memory.retrieve_relevant(query, k=3)
+        messages: list[ChatCompletionMessageParam] = self._initial_messages(
+            query=query, past_turns=past_turns
+        )
+
+        citations: list[Citation] = []
+        last_tool_used = "(none)"
+        chunk_index = 0
+
+        for iteration in range(self._max_iterations):
+            iterations_run = iteration + 1
+            # Stream the model response. Tool-call iterations come back
+            # with tool_calls and no content. Final-answer iterations come
+            # back with content text and no tool_calls.
+            stream = await self._openai.chat.completions.create(
+                model=self._chat_model,
+                messages=messages,
+                tools=tool_specs,
+                tool_choice="required" if iteration == 0 else "auto",
+                temperature=0.2,
+                stream=True,
+            )
+
+            text_buffer: list[str] = []
+            # OpenAI streams tool_calls as a sequence of partial chunks
+            # indexed by position. Accumulate into a dict keyed by ``index``.
+            tool_call_buf: dict[int, dict[str, str]] = {}
+
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if getattr(delta, "content", None):
+                    content_str = delta.content or ""
+                    text_buffer.append(content_str)
+                    yield AssistantTextDelta(text=content_str, chunk_index=chunk_index)
+                    chunk_index += 1
+                if getattr(delta, "tool_calls", None):
+                    for tc in delta.tool_calls or []:
+                        idx = getattr(tc, "index", 0)
+                        slot = tool_call_buf.setdefault(
+                            idx, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if getattr(tc, "id", None):
+                            slot["id"] = tc.id or slot["id"]
+                        fn = getattr(tc, "function", None)
+                        if fn is not None:
+                            if getattr(fn, "name", None):
+                                slot["name"] += fn.name or ""
+                            if getattr(fn, "arguments", None):
+                                slot["arguments"] += fn.arguments or ""
+
+            if tool_call_buf:
+                # Tool-call iteration. Rebuild the assistant turn + run
+                # each tool, append tool messages, and continue the loop.
+                # Rename to ``call`` so mypy doesn't conflate this dict[str, str]
+                # with the ``tc: ChoiceDeltaToolCall`` from the streaming
+                # accumulator loop above.
+                ordered_calls: list[dict[str, str]] = [
+                    call for _, call in sorted(tool_call_buf.items(), key=lambda kv: kv[0])
+                ]
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "".join(text_buffer) or "",
+                        "tool_calls": [
+                            {
+                                "id": call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": call["name"],
+                                    "arguments": call["arguments"] or "{}",
+                                },
+                            }
+                            for call in ordered_calls
+                        ],
+                    }
+                )
+                for call in ordered_calls:
+                    try:
+                        args = json.loads(call["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        logger.warning("agent_stream: malformed tool args: %r", call["arguments"])
+                        args = {}
+                    result = await self._dispatch(tool_name=call["name"], args=args, query=query)
+                    citations.extend(result.citations)
+                    last_tool_used = call["name"]
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": result.text,
+                        }
+                    )
+                continue
+
+            # No tool_calls -> the streamed text was the final answer.
+            answer_text = "".join(text_buffer)
+            deduped = _dedupe_citations(citations)
+            if deduped:
+                citation_block = "\n\nSources: " + " ".join(c.render() for c in deduped)
+                yield AssistantTextDelta(text=citation_block, chunk_index=chunk_index)
+                chunk_index += 1
+                answer_text = f"{answer_text}{citation_block}"
+            try:
+                self._memory.record_qa(
+                    query=query,
+                    answer=answer_text,
+                    citations=[c.render() for c in deduped],
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("failed to record Q/A in Mneme: %s", exc)
+            yield AssistantStreamFinal(
+                citations=[
+                    CitationRef(library=c.library, version=c.version, source=c.source)
+                    for c in deduped
+                ],
+                tool_used=last_tool_used,
+                iterations=iterations_run,
+            )
+            return
+
+        # Iteration cap hit.
+        logger.warning(
+            "agent_stream hit max_iterations=%d for query %r", self._max_iterations, query
+        )
+        cap_text = (
+            "I reached my iteration limit looking for an answer. "
+            "Try rephrasing the question or indexing the relevant library."
+        )
+        yield AssistantTextDelta(text=cap_text, chunk_index=chunk_index)
+        deduped = _dedupe_citations(citations)
+        yield AssistantStreamFinal(
+            citations=[
+                CitationRef(library=c.library, version=c.version, source=c.source) for c in deduped
+            ],
+            tool_used=last_tool_used,
+            iterations=self._max_iterations,
         )
 
     async def _dispatch(self, *, tool_name: str, args: dict[str, Any], query: str) -> ToolResult:
