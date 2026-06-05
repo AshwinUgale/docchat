@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-02
+
+### Added
+- **Click-to-open citations.** Each citation in the streaming-final footer is now a clickable chip showing `library@version:source`. Clicking posts an `openCitation` message to the extension, which calls `vscode.env.openExternal` with the original raw-GitHub `source_url`. URL is validated to be `http(s)://` only so a malicious payload can't shell out to `file://` or `vscode://`.
+- **Settings drawer in the webview** (gear icon in the header). Three knobs:
+  - `chat_model` — dropdown: `gpt-4o-mini` (default) / `gpt-4o`
+  - `score_floor` — slider 0.05–0.40 step 0.01
+  - `max_iterations` — slider 1–5 step 1
+  Changes send a `SettingsUpdate` message over the WebSocket directly to the sidecar; the runtime settings dict applies on the next `user_query`. No sidecar respawn needed. The protocol was already in place since v0.7; v0.7.1 is purely the UI.
+- `Citation.source_url` field — populated by `SearchDocsTool` (from the Qdrant payload's `source_url`) and `FindInChangelogTool` (from the raw-GitHub URL it fetched). Propagates through to `CitationRef.source_url` over the wire so the webview can render click-to-open chips without re-parsing the streamed text.
+
+### Changed
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to `0.7.1`.
+- Webview header reads `v0.7.1`.
+
+### Notes
+- v0.7.1 is purely webview + extension JS/TS work plus the small `source_url` plumbing in `tools.py` / `agent.py`. Eval numbers and the sidecar agent path are unchanged from v0.7.0.
+
 ## [0.7.0] - 2026-06-02
 
 ### Added
@@ -137,7 +155,8 @@ Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope`
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/AshwinUgale/docchat/compare/v0.5.0...v0.6.0

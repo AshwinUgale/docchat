@@ -112,14 +112,20 @@ async def _dispatch(ws: WebSocket, msg: UserQuery | IndexLibrary | SettingsUpdat
 
 
 def _apply_settings_update(msg: SettingsUpdate) -> None:
-    """v0.7: persist the in-process settings the agent reads on next query."""
+    """v0.7: persist the in-process settings the agent reads on next query.
+
+    v0.7.1 uses logger.warning rather than logger.info so the line shows
+    up in the DocChat Output channel without configuring basicConfig
+    (which would conflict with uvicorn's own log setup). Settings
+    changes are low-frequency user actions worth surfacing.
+    """
     if msg.chat_model is not None:
         _RUNTIME_SETTINGS["chat_model"] = msg.chat_model
     if msg.score_floor is not None:
         _RUNTIME_SETTINGS["score_floor"] = msg.score_floor
     if msg.max_iterations is not None:
         _RUNTIME_SETTINGS["max_iterations"] = msg.max_iterations
-    logger.info("runtime settings updated: %r", _RUNTIME_SETTINGS)
+    logger.warning("runtime settings updated: %r", _RUNTIME_SETTINGS)
 
 
 async def _run_agent(ws: WebSocket, query: str) -> None:

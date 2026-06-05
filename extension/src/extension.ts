@@ -83,6 +83,31 @@ async function openChatPanel(context: vscode.ExtensionContext): Promise<void> {
   // hard-coded values in HTML.
   void panel.webview.postMessage({ type: "sidecarPort", port });
 
+  // v0.7.1 — webview → extension messages. Currently only ``openCitation``:
+  // the webview's click-to-open citation chips post a structured message
+  // with the source URL, and we open it via ``vscode.env.openExternal``.
+  // Settings updates are NOT routed through here — the webview sends
+  // them directly to the sidecar over WebSocket since the sidecar is
+  // what acts on them.
+  panel.webview.onDidReceiveMessage((msg: unknown) => {
+    if (!msg || typeof msg !== "object") return;
+    const m = msg as Record<string, unknown>;
+    if (m.type === "openCitation") {
+      const url = typeof m.source_url === "string" ? m.source_url : null;
+      if (!url) {
+        outputChannel?.appendLine("[docchat] openCitation skipped: no source_url");
+        return;
+      }
+      // Only allow http(s) URLs - we don't want a malicious payload to
+      // shell out to file:// or vscode:// via openExternal.
+      if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        outputChannel?.appendLine(`[docchat] openCitation rejected non-http URL: ${url}`);
+        return;
+      }
+      void vscode.env.openExternal(vscode.Uri.parse(url));
+    }
+  });
+
   panel.onDidDispose(() => {
     activePanel = undefined;
     if (activeSidecar) {

@@ -441,7 +441,12 @@ class Agent:
                 logger.warning("failed to record Q/A in Mneme: %s", exc)
             yield AssistantStreamFinal(
                 citations=[
-                    CitationRef(library=c.library, version=c.version, source=c.source)
+                    CitationRef(
+                        library=c.library,
+                        version=c.version,
+                        source=c.source,
+                        source_url=c.source_url,
+                    )
                     for c in deduped
                 ],
                 tool_used=last_tool_used,
@@ -461,7 +466,13 @@ class Agent:
         deduped = _dedupe_citations(citations)
         yield AssistantStreamFinal(
             citations=[
-                CitationRef(library=c.library, version=c.version, source=c.source) for c in deduped
+                CitationRef(
+                    library=c.library,
+                    version=c.version,
+                    source=c.source,
+                    source_url=c.source_url,
+                )
+                for c in deduped
             ],
             tool_used=last_tool_used,
             iterations=self._max_iterations,

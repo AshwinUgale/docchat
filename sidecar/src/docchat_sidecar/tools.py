@@ -50,13 +50,14 @@ logger = logging.getLogger(__name__)
 class Citation:
     """Inline citation token rendered by the chat panel.
 
-    Format: ``[react@18.2.0:useState.md]``. v0.5+ layers click-to-open on
-    top of this same shape.
+    Format: ``[react@18.2.0:useState.md]``. v0.7.1 carries the source URL
+    so the webview can render click-to-open spans without re-parsing.
     """
 
     library: str
     version: str
     source: str  # display label, typically the doc page filename
+    source_url: str | None = None  # v0.7.1: original raw-GitHub URL for click-to-open
 
     def render(self) -> str:
         return f"[{self.library}@{self.version}:{self.source}]"
@@ -178,7 +179,12 @@ class SearchDocsTool:
             text_parts.append(f"## {payload_lib}@{payload_ver} - {source_label}\n\n{chunk_text}")
             if source_label not in seen_sources:
                 citations.append(
-                    Citation(library=payload_lib, version=payload_ver, source=source_label)
+                    Citation(
+                        library=payload_lib,
+                        version=payload_ver,
+                        source=source_label,
+                        source_url=source_url or None,
+                    )
                 )
                 seen_sources.add(source_label)
         return ToolResult(text="\n\n---\n\n".join(text_parts), citations=citations)
@@ -366,7 +372,12 @@ class FindInChangelogTool:
             return ToolResult(
                 text=(f"No CHANGELOG entry mentioning {library}@{version} matched {query!r}.")
             )
-        citation = Citation(library=library, version=version, source="CHANGELOG.md")
+        citation = Citation(
+            library=library,
+            version=version,
+            source="CHANGELOG.md",
+            source_url=url,
+        )
         return ToolResult(text=slice_text, citations=[citation])
 
     async def _fetch_changelog(self, url: str) -> str:
