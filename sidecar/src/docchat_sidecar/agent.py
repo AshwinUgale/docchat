@@ -194,8 +194,22 @@ class Agent:
         # so v0.7+ can grow to N>3 tools without restructuring.
         self._picker = ToolPicker(FunctionSchemaSource(tool_schemas()))
 
-    async def answer(self, query: str) -> AgentResponse:
-        """Run one query through the multi-iteration ReAct loop."""
+    async def answer(
+        self,
+        query: str,
+        *,
+        pinned_libraries: dict[str, str] | None = None,
+    ) -> AgentResponse:
+        """Run one query through the multi-iteration ReAct loop.
+
+        v0.9.1: ``pinned_libraries`` is a dict mapping library names to the
+        exact version the user's lockfile pins (e.g. ``{"react": "18.2.0",
+        "fastapi": "0.95.0"}``). When provided, the system prompt gets a
+        "Project lockfile pins" section AND ``_dispatch`` rewrites any
+        tool-call ``version`` arg to match the pin for that library. This
+        closes the bug where the LLM was inferring versions from question
+        text and hitting collections that don't exist (fastapi_0_95_2 etc.).
+        """
         # 1. ToolPicker preselects candidate tools. At v0.6 with 3 tools
         #    we always pass all of them through; the LLM picks per iteration.
         candidate_names = [s.id for s in self._picker.select(query, k=10)]
@@ -208,7 +222,7 @@ class Agent:
 
         # 3. Build the initial chat-completion message list.
         messages: list[ChatCompletionMessageParam] = self._initial_messages(
-            query=query, past_turns=past_turns
+            query=query, past_turns=past_turns, pinned_libraries=pinned_libraries
         )
 
         # 4. ReAct loop. On each iteration the model either:
@@ -270,7 +284,12 @@ class Agent:
                         "agent: malformed tool args from model: %r", tc.function.arguments
                     )
                     args = {}
-                result = await self._dispatch(tool_name=tool_name, args=args, query=query)
+                result = await self._dispatch(
+                    tool_name=tool_name,
+                    args=args,
+                    query=query,
+                    pinned_libraries=pinned_libraries,
+                )
                 citations.extend(result.citations)
                 tool_outputs.append(result.text)
                 last_tool_used = tool_name
@@ -545,21 +564,43 @@ class Agent:
             iterations=self._max_iterations,
         )
 
-    async def _dispatch(self, *, tool_name: str, args: dict[str, Any], query: str) -> ToolResult:
+    async def _dispatch(
+        self,
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        query: str,
+        pinned_libraries: dict[str, str] | None = None,
+    ) -> ToolResult:
         """Run the named tool with the model's args, defaulting where missing.
 
         v0.6 lets the LLM pass ``library``/``version``/``query`` via
         function-call args. If those are missing we fall back to the
         Agent's defaults (so the tool always gets workable inputs).
+        v0.9 adds optional ``api_name`` for SearchDocsTool retrieval
+        filtering.
+        v0.9.1: when ``pinned_libraries`` is set and the model picked a
+        library that's in the pin map, OVERRIDE the model's version with
+        the pinned one. The LLM is unreliable at picking exact patch
+        versions from question text; the lockfile is the source of truth.
         """
         tool = self._tools_by_name.get(tool_name)
         if tool is None:
             return ToolResult(text=f"[unknown tool: {tool_name}]")
         library = str(args.get("library") or self._default_library)
         version = str(args.get("version") or self._default_version)
+        # v0.9.1: pinned version overrides whatever the LLM guessed.
+        if pinned_libraries:
+            pinned_ver = pinned_libraries.get(library.lower())
+            if pinned_ver:
+                version = pinned_ver
         tool_query = str(args.get("query") or query)
         if tool_name == self._search_docs.name:
-            return await self._search_docs.run(library=library, version=version, query=tool_query)
+            api_name_arg = args.get("api_name")
+            api_name = str(api_name_arg) if api_name_arg else None
+            return await self._search_docs.run(
+                library=library, version=version, query=tool_query, api_name=api_name
+            )
         if tool_name == self._search_workspace.name:
             return await self._search_workspace.run(query=tool_query)
         if tool_name == self._find_changelog.name:
@@ -569,13 +610,35 @@ class Agent:
         return ToolResult(text=f"[unknown tool: {tool_name}]")
 
     def _initial_messages(
-        self, *, query: str, past_turns: list[str]
+        self,
+        *,
+        query: str,
+        past_turns: list[str],
+        pinned_libraries: dict[str, str] | None = None,
     ) -> list[ChatCompletionMessageParam]:
-        """Build the starting message list: system + (past Q/A) + user."""
+        """Build the starting message list: system + (past Q/A) + user.
+
+        v0.9.1: when ``pinned_libraries`` is set, surface the lockfile
+        pins to the LLM so it picks the right (library, version) per
+        tool call instead of guessing from question text.
+        """
         system_content = _SYSTEM_PROMPT
+        if pinned_libraries:
+            pins_text = ", ".join(
+                f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items())
+            )
+            system_content += (
+                f"\n\n## Project lockfile pins\n\n"
+                f"The user's project pins: {pins_text}. "
+                f"When calling search_docs or find_in_changelog, use these "
+                f"exact (library, version) pairs - do not guess versions "
+                f"from question text."
+            )
         if past_turns:
             past_text = "\n\n".join(f"- {t}" for t in past_turns)
-            system_content = f"{_SYSTEM_PROMPT}\n\n## Past Q/A in this workspace\n\n{past_text}"
+            system_content = (
+                f"{system_content}\n\n## Past Q/A in this workspace\n\n{past_text}"
+            )
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": query},

@@ -125,20 +125,33 @@ class SearchDocsTool:
         # override via the kwarg.
         self._floors_by_library: dict[str, float] = {
             "fastapi": 0.10,
-            # v0.8: vue docs (Composition API reference + guide pages) are
-            # similar to fastapi's tutorial surface - bigger pages, more
-            # varied content, in-scope queries cluster around 0.08-0.12
-            # cosine. First v0.8 eval pass left vue on the global 0.15
-            # default and 7/8 in-scope vue queries got over-refused.
-            # 0.10 brings vue in line with fastapi's calibration.
-            "vue": 0.10,
+            # v0.8 set vue=0.10 (mirror of fastapi calibration). v0.8 eval
+            # showed 7/8 in-scope vue queries STILL refused at 0.10, so
+            # vue scores land even lower than fastapi's. v0.9 drops to
+            # 0.05 after logger-instrumented investigation. The vue oos
+            # entries (Angular signal, Svelte rune) still refuse cleanly
+            # at 0.05 because cross-framework queries don't even land hits
+            # in vue's collection - their scores cluster below 0.05.
+            "vue": 0.05,
             **(floors_by_library or {}),
         }
 
     def _floor_for(self, library: str) -> float:
         return self._floors_by_library.get(library.lower(), self._score_floor)
 
-    async def run(self, *, library: str, version: str, query: str) -> ToolResult:
+    async def run(
+        self,
+        *,
+        library: str,
+        version: str,
+        query: str,
+        api_name: str | None = None,
+    ) -> ToolResult:
+        """Retrieve top-k chunks. ``api_name`` (v0.9) optionally post-filters
+        Qdrant hits to chunks whose payload.api_name matches (case-insensitive
+        startswith). Use when the user's question names a specific API ("how
+        do I use useState") so the LLM gets only chunks for that API rather
+        than a mix that may include neighbouring hooks."""
         collection = collection_name_for(library, version)
         if not await self._qdrant.collection_exists(collection_name=collection):
             return ToolResult(
@@ -162,7 +175,35 @@ class SearchDocsTool:
         # cleanly on the empty result rather than hallucinating from base
         # knowledge. v0.7: per-library floor override (see __init__).
         floor = self._floor_for(library)
+        # v0.9: log the score distribution per query so eval runs surface
+        # WHY a query gets refused (top hit at 0.07 below floor=0.10 etc.).
+        # Eval CLI configures logging at INFO so these surface in stdout
+        # alongside the headline metrics. Sidecar path keeps them at INFO
+        # too but the default sidecar log config doesn't show them - tweak
+        # the level if you want them in the Output channel.
+        if raw_hits:
+            top_scores = [round(getattr(h, "score", 0.0), 3) for h in raw_hits[:5]]
+            logger.info(
+                "search_docs %s@%s floor=%.2f top-scores=%r query=%r",
+                library,
+                version,
+                floor,
+                top_scores,
+                query,
+            )
         hits = [h for h in raw_hits if getattr(h, "score", 0.0) >= floor]
+        # v0.9: api_name post-filter. Case-insensitive prefix match on the
+        # payload's api_name so "useState" matches "useState" but also
+        # "useStateReducer" if such a thing existed. Empty result after the
+        # filter falls through to the same no-hits message so the agent
+        # refuses cleanly when an API name doesn't match the indexed set.
+        if api_name:
+            api_lower = api_name.lower()
+            hits = [
+                h
+                for h in hits
+                if (h.payload or {}).get("api_name", "").lower().startswith(api_lower)
+            ]
         if not hits:
             return ToolResult(text=f"No relevant chunks found for {query!r}.")
         text_parts: list[str] = []
@@ -491,6 +532,16 @@ def tool_schemas() -> list[dict[str, Any]]:
                     "library": {"type": "string"},
                     "version": {"type": "string"},
                     "query": {"type": "string"},
+                    "api_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional. If the user's question names a specific "
+                            "API (e.g. useState, BackgroundTasks, computed), "
+                            "pass its name here to restrict retrieval to chunks "
+                            "tagged with that API. Omit when the question is "
+                            "broader."
+                        ),
+                    },
                 },
                 "required": ["library", "version", "query"],
             },

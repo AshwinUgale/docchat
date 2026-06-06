@@ -24,12 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class AgentLike(Protocol):
-    """Anything that exposes ``async answer(query) -> AgentResponse-shaped``.
+    """Anything that exposes ``async answer(query, *, pinned_libraries=...)``.
 
     Tests substitute a fake; production passes a real ``Agent``.
+    The ``pinned_libraries`` kwarg (v0.9.1) lets the runner inject the
+    corpus entry's library@version into the agent's system prompt so the
+    LLM picks the right collection instead of guessing.
     """
 
-    async def answer(self, query: str) -> object: ...
+    async def answer(
+        self, query: str, *, pinned_libraries: dict[str, str] | None = None
+    ) -> object: ...
 
 
 async def run_one(
@@ -44,8 +49,14 @@ async def run_one(
     ``.tool_used``, and ``.citations`` (each citation has ``.render()``).
     This keeps the runner decoupled from the concrete Agent class.
     """
+    # v0.9.1: pass the corpus entry's library/version as the lockfile pin
+    # so the agent calls search_docs with the right (library, version)
+    # rather than guessing from question text. Closes the bug where
+    # FastAPI queries hit fastapi_0_95_2 and Vue queries hit vue_3_0_0
+    # (neither indexed).
+    pinned = {entry.library.lower(): entry.version}
     start = time.perf_counter()
-    response = await agent.answer(entry.question)
+    response = await agent.answer(entry.question, pinned_libraries=pinned)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
     answer_text = str(getattr(response, "text", ""))

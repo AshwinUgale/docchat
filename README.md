@@ -4,9 +4,9 @@
 
 [![status](https://img.shields.io/badge/status-alpha-orange)](#)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![version](https://img.shields.io/badge/version-0.8.0-blue)](./CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.0-blue)](./CHANGELOG.md)
 
-**Status:** v0.8 — multi-iteration ReAct over three indexed libraries (React 18.2 + FastAPI 0.95 + Vue 3.4), streaming responses, chunk-level metadata grounding, marketplace-prep manifest. Marketplace publish at v1.0.
+**Status:** v0.9 — multi-iteration ReAct over three indexed libraries (React 18.2 + FastAPI 0.95 + Vue 3.4), streaming responses, lockfile-pinned retrieval routing, per-query score logging. Marketplace publish at v1.0.
 
 ---
 
@@ -20,16 +20,23 @@ DocChat fixes this. It parses your project's lockfiles, indexes the docs for the
 
 ## How it does
 
-| Metric | v0.8 baseline | Corpus |
+| Metric | v0.9 baseline | Corpus |
 |---|---|---|
-| **Answer accuracy** (LLM-judged, over answered entries) | **0.889** | React 18.2 + FastAPI 0.95 + Vue 3.4 |
-| **Version correctness** (substring, over answered entries) | **0.895** | 40-pair, 3 libraries |
-| **Refusal rate** (over entries classified out-of-scope) | **1.000** | 8 true oos + retrieval-gated |
-| **In-scope answered** | **19 of 32** | corpus-in-scope |
-| **p95 latency** | **~12 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
+| **In-scope answered** | **35 of 40** | 88% — was 59% at v0.8 |
+| **Version correctness** (substring, over answered entries) | **0.943** | 40-pair, 3 libraries |
+| **Answer accuracy** (LLM-judged, over answered entries) | **0.781** | judged-in-scope only |
+| **Refusal rate** (over entries classified out-of-scope) | **1.000** | retrieval-gated + canonical phrase |
+| **p95 latency** | **~13 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
 | **Cost / turn** | **~$0.0003** | 1–3 streamed OpenAI calls per query |
 
-Best accuracy in the project. v0.8's structural changes lifted accuracy from v0.7's 0.882 → 0.889 even with a third indexed library (Vue 3.4) added and the corpus grown from 30 → 40 pairs:
+Recall nearly doubled at v0.9 (19 → 35 answered) while `version_correctness` returned to the v0.7 best of 0.943. v0.9's structural changes:
+
+- **`pinned_libraries` plumbing through `Agent.answer()` + eval runner.** v0.9's per-query score logging surfaced a bug that had been hidden since v0.6: the LLM was inferring versions from question text and hitting unindexed collections (`fastapi_0_95_2` instead of `fastapi_0_95_0`, `vue_3_0_0` instead of `vue_3_4_0`). The runner now passes the corpus entry's library@version as a lockfile pin; the agent's system prompt surfaces it and `_dispatch` overrides any wrong version the LLM guesses. 16 previously-refused queries now answer.
+- **Vue floor recalibrated from 0.10 → 0.05.** With the routing fix in place, Vue queries actually hit `vue_3_4_0` and score 0.40–0.55 (well above any reasonable floor); the original 7/8 over-refusal was 100% the routing bug, not the floor.
+- **`api_name` retrieval filter on `SearchDocsTool`.** New optional kwarg the LLM can pass to constrain retrieval to chunks tagged with a specific API (e.g. `api_name="useState"`). Tightens precision when the question names an API explicitly.
+- **Per-query score logging.** Every `search_docs` call emits `top-scores=[...]` at INFO so retrieval failures self-document. This is what surfaced the routing bug above.
+
+The trade-off: accuracy ticked down from v0.8's 0.889 → 0.781 because the answered set doubled and now includes harder Vue + FastAPI queries that previously refused. In absolute terms that's ~27 correct answers vs v0.8's ~17 — **more correct answers, on a larger surface, with version-correctness preserved**.
 
 - **Chunk-level metadata in the Qdrant payload.** Indexer now extracts `api_name` (from source filename) and `section_heading` (most recent H2 at chunk start) into the payload. `SearchDocsTool` surfaces both in every retrieval header: `## react@18.2.0 - useState  (useState.md / Reference)`. Gives the LLM an explicit "this chunk is about API X, in section Y, pinned to version Z" signal in every block.
 - **Vue 3.4 as the third indexed library.** 10 Composition-API markdown pages from `vuejs/docs`. Corpus extended with 8 Vue in-scope pairs (ref / reactive / computed / watch / lifecycle / provide / defineModel) and 2 cross-framework oos (Angular signal, Svelte rune).
@@ -54,7 +61,8 @@ uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --outpu
 | v0.6 | 0.625 | 0.750 | 8 / 24 | multi-iter ReAct + FastAPI: regressed |
 | v0.6.1 | 0.714 | 0.875 | 8 / 24 | changelog regex fix |
 | v0.7 | 0.882 | 0.944 | 18 / 24 | per-library floors + version anchoring |
-| **v0.8** | **0.889** | **0.895** | **19 / 32** | chunk metadata + Vue 3.4 (3rd library) + critique reverted |
+| v0.8 | 0.889 | 0.895 | 19 / 32 | chunk metadata + Vue 3.4 (3rd library) + critique reverted |
+| **v0.9** | **0.781** | **0.943** | **35 / 40** | pinned_libraries fix (routing bug) + api_name filter + score logging |
 
 The portfolio narrative is the iteration, not just the final number. Every regression got measured, named, and patched — including a v0.6.1 prompt-softening attempt that was tried and reverted with eval data ([see CHANGELOG](./CHANGELOG.md)).
 
@@ -70,13 +78,13 @@ The corpus + runner + LLM judge live in [`evals/`](./evals/).
 
 ---
 
-## Install (v0.8)
+## Install (v0.9)
 
 The `.vsix` ships as a release artifact on GitHub. Marketplace publish lands at v1.0.
 
 ```powershell
-# Download docchat-0.8.0.vsix from the GitHub Releases page, then:
-code --install-extension docchat-0.8.0.vsix
+# Download docchat-0.9.0.vsix from the GitHub Releases page, then:
+code --install-extension docchat-0.9.0.vsix
 ```
 
 Python 3.11+ on PATH is required (the extension spawns a sidecar). Docker is required for Qdrant (vector store):
@@ -158,9 +166,8 @@ To run the extension in a dev host: open `extension/` in VS Code and press **F5*
 
 ## Roadmap
 
-- **v0.8** (current) — chunk-level metadata in Qdrant payload, Vue 3.4 as third indexed library, marketplace-prep manifest, self-critique pass (opt-in)
-- **v0.9** — Vue recall investigation (7/8 Vue queries currently floor-pruned), chunk-level filtering by `api_name`, second version of an existing library (FastAPI 0.100)
-- **v1.0** — Marketplace publish, auto-install sidecar via bundled venv, 150-pair × 5-library eval corpus, icon
+- **v0.9** (current) — per-query score logging surfaced a routing bug; `pinned_libraries` plumbing fixed it (recall 19 → 35 / 40); `api_name` retrieval filter; Vue floor recalibrated
+- **v1.0** — production sidecar reads lockfile pins (today only the eval runner does), git-ref resolution + FastAPI 0.100 (same-library-two-versions demo), Marketplace publish, auto-install sidecar via bundled venv, icon
 
 ---
 

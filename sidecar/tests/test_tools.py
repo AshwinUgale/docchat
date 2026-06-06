@@ -214,6 +214,79 @@ async def test_search_docs_floors_by_library_override_kwarg() -> None:
     assert "No relevant chunks" in result.text
 
 
+async def test_search_docs_api_name_filter_keeps_matching_hits() -> None:
+    """v0.9: api_name kwarg restricts retrieval to chunks tagged with that API."""
+    qdrant = _fake_qdrant_with_hits(
+        [
+            {
+                "text": "useState returns a tuple.",
+                "source_url": "https://x/useState.md",
+                "api_name": "useState",
+            },
+            {
+                "text": "useEffect runs after render.",
+                "source_url": "https://x/useEffect.md",
+                "api_name": "useEffect",
+            },
+        ],
+        scores=[0.55, 0.50],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(qdrant=qdrant, openai=openai)
+    result = await tool.run(
+        library="react", version="18.2.0", query="state hooks", api_name="useState"
+    )
+    assert "useState returns a tuple" in result.text
+    assert "useEffect runs after render" not in result.text
+
+
+async def test_search_docs_api_name_filter_empty_falls_through_to_refusal() -> None:
+    """v0.9: api_name with no matching chunks -> 'No relevant chunks'."""
+    qdrant = _fake_qdrant_with_hits(
+        [
+            {
+                "text": "useEffect chunk.",
+                "source_url": "https://x/useEffect.md",
+                "api_name": "useEffect",
+            }
+        ],
+        scores=[0.55],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(qdrant=qdrant, openai=openai)
+    result = await tool.run(
+        library="react",
+        version="18.2.0",
+        query="state hooks",
+        api_name="useState",  # doesn't match any chunk's api_name
+    )
+    assert "No relevant chunks" in result.text
+
+
+async def test_search_docs_api_name_filter_omitted_returns_all_hits() -> None:
+    """v0.9: without api_name kwarg, behaviour is unchanged (all floor-passing hits)."""
+    qdrant = _fake_qdrant_with_hits(
+        [
+            {
+                "text": "useState chunk.",
+                "source_url": "https://x/useState.md",
+                "api_name": "useState",
+            },
+            {
+                "text": "useEffect chunk.",
+                "source_url": "https://x/useEffect.md",
+                "api_name": "useEffect",
+            },
+        ],
+        scores=[0.55, 0.50],
+    )
+    openai = _fake_openai_with_query_embedding()
+    tool = SearchDocsTool(qdrant=qdrant, openai=openai)
+    result = await tool.run(library="react", version="18.2.0", query="any hook")
+    assert "useState chunk" in result.text
+    assert "useEffect chunk" in result.text
+
+
 async def test_search_docs_chunk_text_carries_library_and_version_prefix() -> None:
     """v0.7: chunk headers include library@version so the LLM has an
     explicit anchor for version grounding."""

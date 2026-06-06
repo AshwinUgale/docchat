@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-03
+
+### Added
+- **Per-query score logging on `SearchDocsTool`**. Each retrieval call emits `search_docs <lib>@<ver> floor=<X> top-scores=[...] query=<...>` at `logger.info`. Eval CLI (`evals/__main__.py`) configures `logging.basicConfig(level=INFO)` so these surface in stdout alongside the headline metrics — turns "why did this query refuse?" from guesswork into a one-glance answer.
+- **`api_name` filter on `SearchDocsTool.run`**. New optional kwarg; when set, post-filters Qdrant hits to chunks whose payload `api_name` matches (case-insensitive `startswith`). Exposed via the OpenAI function schema so the model can pass `api_name="useState"` when the user's question names a specific API. Falls through to the same canonical refusal when no chunk matches.
+- **`pinned_libraries` kwarg on `Agent.answer()` + eval runner now passes it.** New `dict[str, str]` mapping library → pinned version. When provided, the agent's system prompt gets a "Project lockfile pins" section AND `_dispatch` overrides any tool-call `version` arg with the pinned one. Closes the bug surfaced by v0.9's score logging: the LLM was guessing versions from question text and hitting unindexed collections (`fastapi_0_95_2` instead of `fastapi_0_95_0`, `vue_3_0_0` instead of `vue_3_4_0`). The bug had been there since v0.6 but was invisible until score logging exposed it.
+- 3 new `test_tools.py` tests covering the api_name filter (keeps matching, drops non-matching, empty-after-filter refuses, omitted-kwarg unchanged).
+
+### Changed
+- **Vue floor recalibrated from 0.10 → 0.05** after v0.8 eval showed 7/8 in-scope Vue queries still refused at 0.10. Vue's Composition-API reference pages intersperse type signatures with prose so cosine scores cluster lower than FastAPI's tutorial pages. Vue oos entries (Angular signal, Svelte rune) still refuse cleanly at 0.05 because they don't match anything in the Vue collection at any score.
+- Agent `_dispatch` forwards `api_name` to `SearchDocsTool.run` when the LLM provides it; other tools ignore the kwarg.
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to `0.9.0`.
+
+### Notes
+- v0.9 is intentionally smaller than v0.8 — no new library, no corpus expansion, no agent-loop changes. After v0.8's marathon-with-mid-milestone-reversion, the discipline play was shipping focused.
+- ADR-012 captures the floor calibration + score logging + api_name filter + the `pinned_libraries` bug-fix that score-logging surfaced; the FastAPI-0.100-alongside-0.95 same-library-two-versions demo is deferred to v1.0 because the indexer currently fetches from `master` only — it needs the git-ref resolution work first.
+- The `pinned_libraries` plumbing is wired through the eval runner at v0.9. The production sidecar (`_run_agent` in `__main__.py`) does NOT yet read lockfile pins; that requires gluing `lockfiles.py` into the agent construction path and lands at v1.0 alongside the auto-install sidecar work.
+
 ## [0.8.0] - 2026-06-03
 
 ### Added
@@ -190,7 +208,8 @@ Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope`
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/AshwinUgale/docchat/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...v0.7.0

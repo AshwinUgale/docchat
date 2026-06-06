@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -45,6 +46,16 @@ from evals.judge import LLMJudge  # noqa: E402
 from evals.metrics import compute_metrics  # noqa: E402
 from evals.runner import run_corpus  # noqa: E402
 from evals.schema import Corpus, RunSummary  # noqa: E402
+
+# v0.9: surface per-query retrieval-score logging from SearchDocsTool so
+# eval output shows WHICH queries dropped chunks under the floor.
+# Configured here (after all imports, so ruff's E402 stays clean) and
+# scoped to the eval CLI only - the sidecar's uvicorn config stays the
+# source of truth in the production path.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s | %(levelname)s | %(message)s",
+)
 
 
 def _parser() -> argparse.ArgumentParser:
