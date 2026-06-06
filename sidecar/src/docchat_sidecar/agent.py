@@ -160,6 +160,7 @@ class Agent:
         default_library: str = "react",
         default_version: str = "18.2.0",
         max_iterations: int = 3,
+        self_critique: bool = False,
     ) -> None:
         self._openai = openai
         self._memory = memory
@@ -168,6 +169,15 @@ class Agent:
         self._default_library = default_library
         self._default_version = default_version
         self._max_iterations = max(1, max_iterations)
+        # v0.8: optional self-critique pass.
+        # Originally defaulted ON in v0.8 with the hypothesis that re-reading
+        # the draft against tool outputs would push precision up. The v0.8
+        # eval ablation flipped that hypothesis: critique=on dropped
+        # accuracy 0.882 -> 0.667 and version 0.944 -> 0.895 (the critique
+        # rewrites well-grounded drafts into worse ones). Defaulting OFF;
+        # the feature stays as opt-in so future prompt tuning or different
+        # ablations can revisit it. See ADR-011 and CHANGELOG v0.8.0.
+        self._self_critique = self_critique
 
         self._search_docs = SearchDocsTool(qdrant=qdrant, openai=openai)
         self._search_workspace = SearchWorkspaceCodeTool(workspace_path=workspace_path)
@@ -207,6 +217,9 @@ class Agent:
         citations: list[Citation] = []
         last_tool_used = "(none)"
         iterations_run = 0
+        # v0.8: collect tool outputs so the self-critique pass can re-read
+        # the same retrieved context the draft was generated from.
+        tool_outputs: list[str] = []
 
         for iteration in range(self._max_iterations):
             iterations_run = iteration + 1
@@ -223,8 +236,12 @@ class Agent:
             tool_calls = msg.tool_calls or []
 
             if not tool_calls:
-                # Final answer.
+                # Final answer. Optionally critique-revise before finalize.
                 answer_text = msg.content or ""
+                if self._self_critique and tool_outputs:
+                    answer_text = await self._critique(
+                        query=query, draft=answer_text, context_blocks=tool_outputs
+                    )
                 return self._finalize(
                     query=query,
                     answer_text=answer_text,
@@ -255,6 +272,7 @@ class Agent:
                     args = {}
                 result = await self._dispatch(tool_name=tool_name, args=args, query=query)
                 citations.extend(result.citations)
+                tool_outputs.append(result.text)
                 last_tool_used = tool_name
                 messages.append(
                     {
@@ -281,6 +299,55 @@ class Agent:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _critique(self, *, query: str, draft: str, context_blocks: list[str]) -> str:
+        """v0.8 self-critique pass: re-read the draft against the retrieved
+        context. If the draft introduced APIs / behaviour that don't appear
+        in the context, return a revised answer; otherwise return the
+        original draft unchanged.
+
+        Costs one extra chat completion at temperature=0 (~$0.0001 on
+        gpt-4o-mini, ~2s latency). Only runs on the non-streaming
+        ``answer()`` path; the streaming path skips this so the streamed
+        text doesn't get rewritten mid-flight.
+        """
+        joined_context = "\n\n---\n\n".join(context_blocks)[:12000]
+        critique_prompt = (
+            "You drafted this answer to the user's question:\n\n"
+            "USER QUESTION:\n"
+            f"{query}\n\n"
+            "YOUR DRAFT:\n"
+            f"---\n{draft}\n---\n\n"
+            "Here is the retrieved documentation context the draft was supposed to "
+            "be grounded in:\n\n"
+            f"---\n{joined_context}\n---\n\n"
+            "Re-read your draft against the context. Check: does your draft mention "
+            "any API name, signature, or behaviour that is NOT present in the "
+            "retrieved context? If yes, that's a leak across versions or a "
+            "hallucination - revise the draft to stay strictly inside the "
+            "retrieved context.\n\n"
+            "Reply with exactly one of:\n"
+            "- 'OK' (on a line by itself) if the draft is faithful to the context.\n"
+            "- The revised full answer text if you need to fix anything. Do not "
+            "  apologize; do not preface with 'Here is the revised answer'; just "
+            "  output the corrected answer directly."
+        )
+        try:
+            response = await self._openai.chat.completions.create(
+                model=self._chat_model,
+                messages=[{"role": "user", "content": critique_prompt}],
+                temperature=0.0,
+            )
+        except Exception as exc:
+            logger.warning("self-critique call failed: %s", exc)
+            return draft
+        critique_text = (response.choices[0].message.content or "").strip()
+        if not critique_text:
+            return draft
+        # Accept "OK" / "ok" / "OK." / "OK - looks good" etc. as "no change".
+        if critique_text.upper().startswith("OK"):
+            return draft
+        return critique_text
 
     def _finalize(
         self,

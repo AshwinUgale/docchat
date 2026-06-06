@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-03
+
+### Added
+- **Chunk-level metadata** in the Qdrant payload. Every chunk now carries `api_name` (derived from source filename via `_api_name_from_url`) and `section_heading` (most recent `## ` H2 at the chunk's start, tracked across the paragraph chunker). `SearchDocsTool` surfaces both in each header: `## react@18.2.0 - useState  (useState.md / Reference)`. Older collections without the fields still serve answers via `payload.get(...)` fallbacks.
+- **Vue 3.4** as the third indexed library. `_urls_for("vue")` covers 10 `vuejs/docs` markdown pages from the Composition API surface (reactivity-core, computed, watch, lifecycle, script-setup, provide/inject, etc.).
+- **Eval corpus** extends to 40 pairs (16 React + 8 FastAPI + 8 Vue in-scope + 8 oos). Vue entries pin Vue-3.5+ APIs (`useTemplateRef`), Vue 2 APIs (`Vue.observable`, `Vue.set`), and Options-API hooks as `forbidden_apis`. New oos entries cover Angular `signal()` and Svelte `$state` cross-framework leaks.
+- **Self-critique pass on `Agent.answer()`** (constructor kwarg `self_critique`, defaults to `False` after eval ablation — see Tried, reverted below). After the multi-iteration ReAct loop produces a draft, one cheap `temperature=0` chat completion re-reads it against the joined tool outputs (truncated at 12 KB). Critique replies `OK` (ship draft unchanged) or returns a revised answer. Cost: ~$0.0001 + ~2s per query when on. Streaming path (`answer_stream()`) skips critique to keep the streaming UX clean.
+- **`--no-self-critique` flag on `python -m evals`** for ablation runs against the same indexed collections.
+- **Marketplace-prep manifest** in `extension/package.json`: marketing-grade `displayName` + `description` (with headline eval numbers), `publisher: AshwinUgale`, expanded `categories` + `keywords`, `bugs.url`, `homepage`, `qna`, `pricing`, `galleryBanner`. Five new VS Code config properties (`docchat.chatModel`, `docchat.scoreFloor`, `docchat.maxIterations`, `docchat.selfCritique`, plus the existing `sidecarPython` / `sidecarPort`) so users can tune via Settings UI in addition to the in-panel drawer.
+- 3 new indexer tests covering H2-heading capture across chunk boundaries.
+- 2 new agent tests covering self-critique: one verifies `OK` keeps the draft, one verifies a non-`OK` reply ships as the revised answer.
+- 1 new schema test verifying the corpus covers all three indexed libraries (`react`, `fastapi`, `vue`).
+
+### Changed
+- `_split_into_chunks` signature changed from `Iterable[str]` to `Iterable[tuple[str, str | None]]`. Each chunk now carries its `section_heading` at chunk start. Existing tests updated to unpack the tuple.
+- `_Chunk` dataclass gains `api_name: str` and `section_heading: str | None`.
+- `Citation` and `CitationRef` already carried `source_url` (v0.7.1); v0.8 didn't expand the wire shape further — the new metadata stays internal to the chunk-header prompt.
+- `SearchDocsTool.floors_by_library` adds `vue: 0.10` (mirrors the FastAPI calibration — Vue's reference + guide pages dilute cosine the same way).
+- Indexer error message for unsupported libraries updated: `(v0.8 supports react + fastapi + vue)`.
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to `0.8.0`.
+
+### Tried, reverted (default flipped)
+- **Self-critique defaulted ON** during initial v0.8 implementation. Eval ablation on the 40-pair corpus measured the regression vs critique-OFF:
+
+  |  | critique ON | critique OFF |
+  |---|---|---|
+  | accuracy | 0.667 | **0.824** |
+  | version | 0.895 | **0.947** |
+  | p95 | 23.1s | **8.1s** |
+
+  The critique pass was actively rewriting well-grounded drafts into worse ones. Default flipped to `self_critique=False` for v0.8 ship. Feature stays as opt-in via constructor kwarg + `--no-self-critique` eval flag so future prompt-tuning can revisit. Same pattern as v0.6.1's prompt-softening reversion: tried it, measured it, kept the data attached, flipped the default.
+
+### Notes
+- Marketplace publish itself is NOT done in v0.8 — author needs to register the publisher on the Visual Studio Marketplace and design `icon.png` (intentionally not bundled; placeholder would be worse than missing). v1.0 lands the actual `vsce publish` and bundled icon.
+
 ## [0.7.1] - 2026-06-02
 
 ### Added
@@ -155,7 +190,8 @@ Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope`
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/AshwinUgale/docchat/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/AshwinUgale/docchat/compare/v0.6.0...v0.6.1

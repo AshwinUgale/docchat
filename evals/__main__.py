@@ -67,6 +67,14 @@ def _parser() -> argparse.ArgumentParser:
         default=os.environ.get("QDRANT_URL", "http://localhost:6333"),
         help="Qdrant URL. Defaults to QDRANT_URL env var or localhost:6333.",
     )
+    p.add_argument(
+        "--no-self-critique",
+        action="store_true",
+        help=(
+            "Disable the v0.8 self-critique pass. Use this to ablate critique "
+            "on/off (default is on)."
+        ),
+    )
     return p
 
 
@@ -84,7 +92,12 @@ async def _run(args: argparse.Namespace) -> RunSummary:
     openai = AsyncOpenAI()
     qdrant = AsyncQdrantClient(url=args.qdrant_url)
     memory = build_memory(workspace_path=None)
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=not args.no_self_critique,
+    )
     judge = None if args.no_judge else LLMJudge(openai=openai)
 
     results = await run_corpus(agent=agent, entries=entries, judge=judge)
@@ -95,6 +108,7 @@ async def _run(args: argparse.Namespace) -> RunSummary:
             "n_entries_requested": len(corpus.entries),
             "n_entries_run": len(entries),
             "judge_enabled": not args.no_judge,
+            "self_critique": not args.no_self_critique,
             "qdrant_url": args.qdrant_url,
         },
         metrics=metrics,

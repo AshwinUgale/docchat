@@ -93,9 +93,12 @@ def test_clean_mdx_strips_imports_and_exports() -> None:
 
 
 def test_split_emits_single_chunk_for_short_text() -> None:
+    # v0.8: yields (text, section_heading) tuples.
     chunks = list(_split_into_chunks("Single paragraph.\n\nAnother short one."))
     assert len(chunks) == 1
-    assert "Single paragraph" in chunks[0]
+    text, heading = chunks[0]
+    assert "Single paragraph" in text
+    assert heading is None  # no H2 in the source
 
 
 def test_split_emits_multiple_chunks_when_target_exceeded() -> None:
@@ -103,16 +106,38 @@ def test_split_emits_multiple_chunks_when_target_exceeded() -> None:
     text = "\n\n".join([long_para, long_para, long_para])
     chunks = list(_split_into_chunks(text))
     assert len(chunks) >= 2
+    assert all(isinstance(c, tuple) and len(c) == 2 for c in chunks)
 
 
 def test_split_skips_empty_paragraphs() -> None:
     chunks = list(_split_into_chunks("para one\n\n\n\npara two"))
-    assert chunks == ["para one\n\npara two"]
+    assert chunks == [("para one\n\npara two", None)]
 
 
 def test_split_empty_text_yields_nothing() -> None:
     assert list(_split_into_chunks("")) == []
     assert list(_split_into_chunks("   \n   ")) == []
+
+
+def test_split_captures_h2_heading_for_chunk_metadata() -> None:
+    """v0.8: chunk should carry the most recent ## heading at its start."""
+    raw = "## Reference\n\nIntro paragraph under Reference.\n\nAnother paragraph.\n"
+    chunks = list(_split_into_chunks(raw))
+    assert len(chunks) == 1
+    text, heading = chunks[0]
+    assert heading == "Reference"
+    assert "Intro paragraph" in text
+
+
+def test_split_heading_advances_across_h2_boundary() -> None:
+    """A chunk that begins after a new H2 carries the new heading."""
+    long = "x" * 1800
+    raw = "## First Section\n\n" + long + "\n\n" + "## Second Section\n\n" + long + "\n"
+    chunks = list(_split_into_chunks(raw))
+    assert len(chunks) >= 2
+    headings = [h for _, h in chunks]
+    assert "First Section" in headings
+    assert "Second Section" in headings
 
 
 # ---------------------------------------------------------------------------

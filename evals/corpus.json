@@ -1,6 +1,6 @@
 {
-  "name": "docchat_react_18_2_fastapi_0_95_v0_6",
-  "description": "30-pair eval corpus spanning two indexed libraries (React 18.2 + FastAPI 0.95). 16 React in-scope + 8 FastAPI in-scope + 6 out-of-scope refusal targets (4 originals + 2 FastAPI-context oos). Each in-scope entry pins forbidden_apis to the next-major equivalents so version_correctness catches regressions (React 19 hooks for React entries, Pydantic v2 / FastAPI 0.100+ idioms for FastAPI entries).",
+  "name": "docchat_react_18_2_fastapi_0_95_vue_3_4_v0_8",
+  "description": "40-pair eval corpus spanning three indexed libraries (React 18.2 + FastAPI 0.95 + Vue 3.4). 32 in-scope (16 React + 8 FastAPI + 8 Vue) + 8 out-of-scope refusal targets (4 React-context + 2 FastAPI-context + 2 Vue-context). Each in-scope entry pins forbidden_apis to the next-major equivalents so version_correctness catches regressions (React 19 hooks, Pydantic v2 / FastAPI 0.100+ idioms, Vue 3.5+ APIs like useTemplateRef, Svelte/Angular cross-framework leaks).",
   "entries": [
     {
       "id": "react_18_useState_basic",
@@ -267,6 +267,94 @@
       "version": "0.95.0",
       "question": "How do I call my FastAPI backend from a React useEffect hook?",
       "expected_answer": "Out of scope as phrased. The React side of this (useEffect + fetch) is an in-scope React question, but DocChat treating this entry as an oos refusal target is intentional: the question crosses libraries and the agent shouldn't try to weave a multi-library answer at v0.6.",
+      "out_of_scope": true
+    },
+    {
+      "id": "vue_3_4_ref_primitive",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I declare a reactive primitive (number, string, boolean) in Vue 3?",
+      "expected_answer": "Call ref(initialValue). It returns a ref object whose .value property holds the current value. Read or assign via .value in script; in templates Vue auto-unwraps top-level refs.",
+      "expected_apis": ["ref"],
+      "forbidden_apis": ["useTemplateRef", "Vue.observable", "Vue.set"]
+    },
+    {
+      "id": "vue_3_4_reactive_object",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I make an object deeply reactive in Vue 3?",
+      "expected_answer": "Wrap it in reactive({ ...fields }). All nested properties become reactive via a Proxy. Note: destructuring a reactive object loses reactivity; use toRefs() to preserve it when destructuring.",
+      "expected_apis": ["reactive"],
+      "forbidden_apis": ["Vue.observable", "Vue.set", "useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_computed_derived_state",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I derive a value from other reactive state in Vue 3?",
+      "expected_answer": "Pass a getter function to computed(): const fullName = computed(() => `${first.value} ${last.value}`). The result is cached and only re-evaluates when a tracked dependency changes. Read via fullName.value.",
+      "expected_apis": ["computed"],
+      "forbidden_apis": ["useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_watch_explicit_source",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I run a side effect when a specific Vue 3 ref changes?",
+      "expected_answer": "Use watch(source, (newValue, oldValue) => { /* effect */ }). The source is either a ref, a reactive object, a getter, or an array of any of those. Pass { immediate: true } to also run on first registration.",
+      "expected_apis": ["watch"],
+      "forbidden_apis": ["useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_watcheffect_vs_watch",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "When should I use watchEffect instead of watch in Vue 3?",
+      "expected_answer": "Use watchEffect when you want a callback that runs immediately and re-runs whenever any reactive dependency it READ during the last run changes. Use watch when you want to explicitly pick the source(s) and get (newValue, oldValue) on each change.",
+      "expected_apis": ["watchEffect", "watch"],
+      "forbidden_apis": ["useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_lifecycle_onmounted",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I run code after the component mounts to the DOM in Vue 3?",
+      "expected_answer": "Import onMounted from 'vue' and call it in setup() (or top-level inside <script setup>). The callback runs after the component is added to the DOM. onUnmounted does the inverse on teardown.",
+      "expected_apis": ["onMounted"],
+      "forbidden_apis": ["beforeCreate", "created", "useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_provide_inject",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I share state from a parent Vue 3 component down to deeply-nested descendants without prop-drilling?",
+      "expected_answer": "Call provide(key, value) in the ancestor and inject(key) in any descendant. The key can be a string or a Symbol (Symbol preferred for type safety). Reactive values stay reactive.",
+      "expected_apis": ["provide", "inject"],
+      "forbidden_apis": ["useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_define_model_macro",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I implement a two-way bound prop (v-model on a child component) in Vue 3.4 using script setup?",
+      "expected_answer": "In <script setup>, call the defineModel() macro: const model = defineModel(). The parent uses v-model='val' on the child; inside the child, read/write via model.value. defineModel became stable in Vue 3.4 (it was experimental in 3.3).",
+      "expected_apis": ["defineModel"],
+      "forbidden_apis": ["useTemplateRef"]
+    },
+    {
+      "id": "vue_3_4_oos_angular",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I use Angular's signal() primitive for state?",
+      "expected_answer": "Out of scope. DocChat should refuse - Angular is not in the indexed library set (only Vue is for non-React frontend at v0.8).",
+      "out_of_scope": true
+    },
+    {
+      "id": "vue_3_4_oos_svelte",
+      "library": "vue",
+      "version": "3.4.0",
+      "question": "How do I use Svelte 5's $state rune for reactive variables?",
+      "expected_answer": "Out of scope. DocChat should refuse - Svelte is not in the indexed library set.",
       "out_of_scope": true
     }
   ]

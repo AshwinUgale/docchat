@@ -67,6 +67,23 @@ _FASTAPI_0_95_URLS: tuple[str, ...] = (
     "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/dependencies/dependencies-with-yield.md",
 )
 
+# v0.8: Vue 3.4 as the third indexed library. Sourced from vuejs/docs
+# master (markdown). Composition API surface — the part that diverged
+# hard from Options API + Vue 2 and where version-grounded answers
+# matter most.
+_VUE_3_4_URLS: tuple[str, ...] = (
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/reactivity-core.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/reactivity-utilities.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-setup.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-lifecycle.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-dependency-injection.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/general.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/sfc-script-setup.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/reactivity-fundamentals.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/computed.md",
+    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/watchers.md",
+)
+
 # OpenAI text-embedding-3-small dimensions (default).
 _DEFAULT_DIMENSIONS = 1536
 # Target chunk size in characters - rough proxy for ~500 tokens.
@@ -93,11 +110,19 @@ def collection_name_for(library: str, version: str) -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class _Chunk:
-    """One chunk ready to embed and upsert."""
+    """One chunk ready to embed and upsert.
+
+    v0.8 enriches the payload with ``api_name`` (derived from the source
+    filename) and ``section_heading`` (the most recent H2 the chunk falls
+    under). Both feed into ``SearchDocsTool``'s prompt header so the LLM
+    sees which API a chunk is about, not just "this came from useState.md".
+    """
 
     source_url: str
     chunk_index: int
     text: str
+    api_name: str
+    section_heading: str | None
 
 
 class DocIndexer:
@@ -140,7 +165,8 @@ class DocIndexer:
                 library=library,
                 version=version,
                 message=(
-                    f"no indexer wired for {library}@{version} yet (v0.6 supports react + fastapi)"
+                    f"no indexer wired for {library}@{version} yet "
+                    "(v0.8 supports react + fastapi + vue)"
                 ),
             )
             return
@@ -175,8 +201,17 @@ class DocIndexer:
                     logger.warning("skipping %s: %s", url, exc)
                     continue
                 text = _clean_mdx(response.text)
-                for idx, chunk_text in enumerate(_split_into_chunks(text)):
-                    chunks.append(_Chunk(source_url=url, chunk_index=idx, text=chunk_text))
+                api_name = _api_name_from_url(url)
+                for idx, (chunk_text, section_heading) in enumerate(_split_into_chunks(text)):
+                    chunks.append(
+                        _Chunk(
+                            source_url=url,
+                            chunk_index=idx,
+                            text=chunk_text,
+                            api_name=api_name,
+                            section_heading=section_heading,
+                        )
+                    )
                 yield IndexProgress(
                     library=library,
                     version=version,
@@ -210,6 +245,10 @@ class DocIndexer:
                             "source_url": c.source_url,
                             "chunk_index": c.chunk_index,
                             "text": c.text,
+                            # v0.8: chunk-level metadata for tighter version
+                            # grounding + per-API filtering in SearchDocsTool.
+                            "api_name": c.api_name,
+                            "section_heading": c.section_heading,
                         },
                     )
                     for c, vector in zip(batch, vectors, strict=True)
@@ -253,12 +292,12 @@ class DocIndexer:
 def _urls_for(library: str, version: str) -> tuple[str, ...]:
     """Source URLs for a given (library, version).
 
-    v0.2 shipped React only. v0.6 adds FastAPI 0.95 to validate that the
-    indexer works for non-React libraries and to give the eval corpus a
-    second-library bucket. The (library, version) match is intentionally
-    loose: any react version maps to the React URLs, any fastapi version
-    maps to the FastAPI URLs. Per-version branching lands at v1.0 when
-    git-ref resolution is wired in.
+    v0.2 shipped React only. v0.6 added FastAPI 0.95 to validate the
+    indexer for non-React libraries. v0.8 adds Vue 3.4 as a third library
+    so the corpus + agent routing exercise three libraries (one Python,
+    two JS frontend frameworks). The (library, version) match is
+    intentionally loose at v0.8: any react version maps to the React
+    URLs, etc. Per-version branching lands at v1.0 with git-ref resolution.
     """
     del version
     lib = library.lower()
@@ -266,7 +305,28 @@ def _urls_for(library: str, version: str) -> tuple[str, ...]:
         return _REACT_18_2_URLS
     if lib == "fastapi":
         return _FASTAPI_0_95_URLS
+    if lib == "vue":
+        return _VUE_3_4_URLS
     return ()
+
+
+def _api_name_from_url(url: str) -> str:
+    """Derive a stable API name from a doc-source URL.
+
+    Used at index time to tag each chunk so SearchDocsTool can surface it
+    in the prompt header. Examples::
+
+        ".../reference/react/useState.md"        -> "useState"
+        ".../docs/tutorial/dependencies/index.md" -> "dependencies"
+        ".../api/composition-api-setup.md"        -> "composition-api-setup"
+    """
+    tail = url.rsplit("/", 1)[-1]
+    stem = tail.removesuffix(".md").removesuffix(".mdx")
+    if stem == "index":
+        parts = url.rstrip("/").split("/")
+        if len(parts) >= 2:
+            return parts[-2]
+    return stem
 
 
 def _clean_mdx(raw: str) -> str:
@@ -276,30 +336,57 @@ def _clean_mdx(raw: str) -> str:
     return no_imports.strip()
 
 
-def _split_into_chunks(text: str) -> Iterable[str]:
+_H2_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
+
+
+def _split_into_chunks(text: str) -> Iterable[tuple[str, str | None]]:
     """Split into ~500-token chunks at paragraph boundaries.
 
-    Simple paragraph-aware splitter: accumulate paragraphs until the running
-    char count exceeds the target, then emit. Avoids slicing mid-sentence.
+    v0.8: yields ``(chunk_text, section_heading)`` pairs. The
+    ``section_heading`` is the most recent H2 (``## ...``) line at the
+    chunk's start, used downstream to surface "## react@18.2 - useState
+    (under Reference)" headers in the SearchDocsTool output. ``None`` if
+    the chunk doesn't fall under any H2 (e.g., pre-frontmatter content
+    that survived the cleaner).
+
+    Simple paragraph-aware splitter: accumulate paragraphs until the
+    running char count exceeds the target, then emit. Avoids slicing
+    mid-sentence.
     """
     if not text.strip():
         return
     buffer: list[str] = []
     buffer_len = 0
+    current_heading: str | None = None
+    # Heading active when the chunk *started* accumulating. We freeze it
+    # at chunk start so a chunk that spans a heading boundary still
+    # carries the heading where it began.
+    chunk_start_heading: str | None = None
     for paragraph in re.split(r"\n\s*\n", text):
         paragraph = paragraph.strip()
         if not paragraph:
             continue
+        # If this paragraph IS (or starts with) an H2, capture it as the
+        # current heading. Markdown chunkers often see "## Foo\nbody..."
+        # as a single paragraph when there's no blank line after the
+        # heading; handle both shapes.
+        first_line = paragraph.splitlines()[0]
+        match = _H2_HEADING_RE.match(first_line)
+        if match:
+            current_heading = match.group(1).strip()
         para_len = len(paragraph)
         if buffer and buffer_len + para_len > _CHUNK_TARGET_CHARS:
-            yield "\n\n".join(buffer)
+            yield "\n\n".join(buffer), chunk_start_heading
             buffer = [paragraph]
             buffer_len = para_len
+            chunk_start_heading = current_heading
         else:
+            if not buffer:
+                chunk_start_heading = current_heading
             buffer.append(paragraph)
             buffer_len += para_len + 2  # +2 for the joining "\n\n"
     if buffer:
         # Emit the trailing buffer regardless of size. Merging would either
         # require backtracking the iterator or duplicating an emitted chunk.
         # A small last chunk is fine for retrieval - it still embeds.
-        yield "\n\n".join(buffer)
+        yield "\n\n".join(buffer), chunk_start_heading

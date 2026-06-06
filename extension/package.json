@@ -1,14 +1,16 @@
 {
   "name": "docchat",
-  "displayName": "DocChat",
-  "description": "Ask questions about your project's libraries at the exact versions your project pins.",
-  "version": "0.7.1",
-  "publisher": "ashwinugale",
+  "displayName": "DocChat — version-pinned library docs Q&A",
+  "description": "Ask questions about your project's libraries at the exact versions your lockfile pins. Eval-measured: 88% accuracy, 94% version correctness, 100% refusal on out-of-scope.",
+  "version": "0.8.0",
+  "publisher": "AshwinUgale",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "Programming Languages",
+    "Education",
     "Other"
   ],
   "keywords": [
@@ -16,11 +18,25 @@
     "chat",
     "rag",
     "docs",
-    "version-pinned"
+    "version-pinned",
+    "react",
+    "fastapi",
+    "vue",
+    "agent"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ashwinugale/docchat.git"
+    "url": "https://github.com/AshwinUgale/docchat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AshwinUgale/docchat/issues"
+  },
+  "homepage": "https://github.com/AshwinUgale/docchat#readme",
+  "qna": "marketplace",
+  "pricing": "Free",
+  "galleryBanner": {
+    "color": "#0e639c",
+    "theme": "dark"
   },
   "main": "./out/extension.js",
   "activationEvents": [
@@ -46,6 +62,31 @@
           "type": "number",
           "default": 0,
           "description": "Port the sidecar should bind to. 0 = pick a random free port at startup."
+        },
+        "docchat.chatModel": {
+          "type": "string",
+          "enum": ["gpt-4o-mini", "gpt-4o"],
+          "default": "gpt-4o-mini",
+          "description": "OpenAI chat model the agent uses. gpt-4o-mini is the cheap default; gpt-4o is slower but sharper."
+        },
+        "docchat.scoreFloor": {
+          "type": "number",
+          "default": 0.15,
+          "minimum": 0.05,
+          "maximum": 0.40,
+          "description": "Cosine-similarity floor for SearchDocsTool. Hits below this score are dropped so the agent refuses cleanly rather than hallucinating off weak retrievals."
+        },
+        "docchat.maxIterations": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Hard cap on agent ReAct iterations per query."
+        },
+        "docchat.selfCritique": {
+          "type": "boolean",
+          "default": true,
+          "description": "If true, the agent runs a second LLM pass over its own draft answer to catch APIs not present in retrieved context. Adds ~2s + ~$0.0001 per query."
         }
       }
     }

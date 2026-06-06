@@ -125,6 +125,13 @@ class SearchDocsTool:
         # override via the kwarg.
         self._floors_by_library: dict[str, float] = {
             "fastapi": 0.10,
+            # v0.8: vue docs (Composition API reference + guide pages) are
+            # similar to fastapi's tutorial surface - bigger pages, more
+            # varied content, in-scope queries cluster around 0.08-0.12
+            # cosine. First v0.8 eval pass left vue on the global 0.15
+            # default and 7/8 in-scope vue queries got over-refused.
+            # 0.10 brings vue in line with fastapi's calibration.
+            "vue": 0.10,
             **(floors_by_library or {}),
         }
 
@@ -166,6 +173,9 @@ class SearchDocsTool:
         # chunks" prompt rule, this gives the LLM an explicit version
         # anchor in every retrieval block and closes the leak path where
         # the model would synthesise across versions.
+        # v0.8: also surface the API name + section heading in each header.
+        # Pre-v0.8 collections (re-index after upgrade) lack these payload
+        # fields; fall back gracefully so an older index still serves answers.
         for hit in hits:
             payload = hit.payload or {}
             chunk_text = payload.get("text", "")
@@ -176,7 +186,17 @@ class SearchDocsTool:
             # call still gets honest provenance.
             payload_lib = payload.get("library", library)
             payload_ver = payload.get("version", version)
-            text_parts.append(f"## {payload_lib}@{payload_ver} - {source_label}\n\n{chunk_text}")
+            api_name = payload.get("api_name")
+            section_heading = payload.get("section_heading")
+            header = f"## {payload_lib}@{payload_ver}"
+            if api_name:
+                header += f" - {api_name}"
+            location_bits: list[str] = [source_label] if source_label else []
+            if section_heading:
+                location_bits.append(section_heading)
+            if location_bits:
+                header += f"  ({' / '.join(location_bits)})"
+            text_parts.append(f"{header}\n\n{chunk_text}")
             if source_label not in seen_sources:
                 citations.append(
                     Citation(

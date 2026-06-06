@@ -146,7 +146,7 @@ async def test_agent_answers_query_with_citations() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
 
     response = await agent.answer("how do I use useState?")
 
@@ -168,7 +168,7 @@ async def test_agent_records_qa_to_workspace_memory() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
 
     await agent.answer("how do I use useState?")
     assert memory.manager.episodic.count() == 1
@@ -183,7 +183,7 @@ async def test_agent_emits_canonical_refusal_phrase() -> None:
     openai = _fake_openai_refuses_immediately()
     qdrant = _fake_qdrant_empty()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
 
     response = await agent.answer("how do I configure CORS in Flask?")
     # The eval's is_refusal heuristic relies on this exact substring.
@@ -237,6 +237,100 @@ async def test_agent_caps_at_max_iterations() -> None:
 # ---------------------------------------------------------------------------
 # Workspace path threads through to SearchWorkspaceCodeTool
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# v0.8 self-critique - on by default in answer(); revises draft if critique
+# returns non-"OK" text; falls through unchanged when critique returns "OK".
+# ---------------------------------------------------------------------------
+
+
+def _fake_openai_with_critique(
+    *, tool_call_args: dict[str, object], draft_text: str, critique_reply: str
+) -> MagicMock:
+    """Scripted fake for the 3-call sequence: tool_call -> draft -> critique."""
+    client = MagicMock()
+    call_count = {"n": 0}
+
+    async def embed(*, model: str, input: list[str]) -> object:
+        del model
+        response = MagicMock()
+        response.data = [MagicMock(embedding=[float(i) / 1536] * 1536) for i, _ in enumerate(input)]
+        return response
+
+    async def chat(**kwargs: object) -> object:
+        del kwargs
+        call_count["n"] += 1
+        choice = MagicMock()
+        if call_count["n"] == 1:
+            tc = MagicMock()
+            tc.id = "call_1"
+            tc.type = "function"
+            tc.function = MagicMock()
+            tc.function.name = tool_call_args["name"]
+            tc.function.arguments = json.dumps(tool_call_args.get("arguments", {}))
+            choice.message = MagicMock(content=None, tool_calls=[tc])
+        elif call_count["n"] == 2:
+            choice.message = MagicMock(content=draft_text, tool_calls=None)
+        else:
+            choice.message = MagicMock(content=critique_reply, tool_calls=None)
+        response = MagicMock()
+        response.choices = [choice]
+        return response
+
+    client.embeddings = MagicMock()
+    client.embeddings.create = embed
+    client.chat = MagicMock()
+    client.chat.completions = MagicMock()
+    client.chat.completions.create = chat
+    return client
+
+
+async def test_agent_self_critique_keeps_draft_when_ok() -> None:
+    """Critique returns 'OK' -> the draft is shipped unchanged."""
+    openai = _fake_openai_with_critique(
+        tool_call_args={
+            "name": "search_docs",
+            "arguments": {"library": "react", "version": "18.2.0", "query": "useState"},
+        },
+        draft_text="useState returns a tuple of value + setter.",
+        critique_reply="OK",
+    )
+    qdrant = _fake_qdrant_with_one_hit()
+    memory = _build_memory()
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=True)
+
+    response = await agent.answer("how do I use useState?")
+    assert "useState returns a tuple" in response.text
+
+
+async def test_agent_self_critique_revises_when_not_ok() -> None:
+    """Critique returns revised text -> the agent ships the revision, not the draft.
+
+    The draft leaks a React-19 API (``use(promise)``). The critique reply
+    is a clean rewrite that mentions neither the forbidden token nor the
+    word "removed"; we verify the revision shipped by checking that
+    distinct critique-only wording appears AND the forbidden token is
+    absent from the body.
+    """
+    openai = _fake_openai_with_critique(
+        tool_call_args={
+            "name": "search_docs",
+            "arguments": {"library": "react", "version": "18.2.0", "query": "useState"},
+        },
+        draft_text="useState returns a tuple. Also use the new use(promise) hook.",
+        critique_reply="Call useState() at the top of your function component to get a value and setter.",
+    )
+    qdrant = _fake_qdrant_with_one_hit()
+    memory = _build_memory()
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=True)
+
+    response = await agent.answer("how do I use useState?")
+    body = response.text.split("Sources:")[0]
+    # The revised wording shipped...
+    assert "at the top of your function component" in body
+    # ...and the React-19 leak that was in the draft is no longer present.
+    assert "use(promise)" not in body
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +419,7 @@ async def test_agent_answer_stream_yields_deltas_and_final() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory)
+    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
 
     events: list[object] = [evt async for evt in agent.answer_stream("how use useState?")]
 
