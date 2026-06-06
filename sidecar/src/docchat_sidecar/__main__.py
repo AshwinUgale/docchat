@@ -145,6 +145,7 @@ async def _run_agent(ws: WebSocket, query: str) -> None:
     from qdrant_client import AsyncQdrantClient
 
     from docchat_sidecar.agent import Agent
+    from docchat_sidecar.lockfiles import parse_package_json
     from docchat_sidecar.memory import build_memory
 
     try:
@@ -171,8 +172,29 @@ async def _run_agent(ws: WebSocket, query: str) -> None:
         await _send(ws, AssistantText(text=f"[agent error] {exc}"))
         return
 
+    # v0.9.1: read lockfile pins from the workspace so the agent routes
+    # queries to the right (library, version) instead of guessing from
+    # question text. Same plumbing the eval runner gained at v0.9. Only
+    # package.json is supported at v0.9.1; pyproject.toml + requirements.txt
+    # land at v1.0 alongside the auto-install sidecar work.
+    pinned_libraries: dict[str, str] | None = None
+    if workspace_path:
+        try:
+            pkg_json = Path(workspace_path) / "package.json"
+            if pkg_json.is_file():
+                pins = parse_package_json(pkg_json)
+                pinned_libraries = {p.library.lower(): p.version for p in pins}
+                if pinned_libraries:
+                    logger.warning(
+                        "loaded %d lockfile pins from %s",
+                        len(pinned_libraries),
+                        pkg_json,
+                    )
+        except Exception as exc:
+            logger.warning("lockfile parse failed (continuing without pins): %s", exc)
+
     try:
-        async for event in agent.answer_stream(query):
+        async for event in agent.answer_stream(query, pinned_libraries=pinned_libraries):
             await _send(ws, event)
     except Exception as exc:
         logger.exception("agent stream failed mid-query")

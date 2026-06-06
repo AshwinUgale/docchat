@@ -2,7 +2,7 @@
   "name": "docchat",
   "displayName": "DocChat — version-pinned library docs Q&A",
   "description": "Ask questions about your project's libraries at the exact versions your lockfile pins. Eval-measured: 88% accuracy, 94% version correctness, 100% refusal on out-of-scope.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "AshwinUgale",
   "license": "MIT",
   "engines": {

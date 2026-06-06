@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-03
+
+### Added
+- **Production sidecar reads lockfile pins via `lockfiles.parse_package_json`.** `_run_agent` in `__main__.py` now parses `<workspace_path>/package.json` (and the sibling `package-lock.json` for exact-version resolution) and passes the resulting `{library: version}` dict as `pinned_libraries` to `Agent.answer_stream`. Live extension demos now get the same routing fix the eval runner got at v0.9 — the agent calls the right collection per query instead of guessing from question text. Logs a `warning` line with the loaded pin count so the Output channel surfaces what was picked up.
+- **`Agent.answer_stream` accepts `pinned_libraries`**, matching `Agent.answer`'s v0.9 signature. Both paths share the same system-prompt + `_dispatch` plumbing.
+- **HARD RULE #5 in the agent system prompt: general-programming refusal.** Questions about language syntax / variable declarations / runtime errors that aren't tied to a pinned library refuse with the canonical phrase. Addresses the v0.9 eval leak where `react_18_oos_general_js` ("difference between let and const") routed to React docs (top score 0.34) and answered instead of refusing.
+
+### Notes
+- The pyproject.toml / requirements.txt parsers (for Python projects without package.json) stay deferred to v1.0 — they need new `lockfiles.parse_pyproject_toml` etc. work.
+- **HARD RULE #5 measured outcome: no metric change.** v0.9.1 eval landed identical to v0.9: `n=40 (in_scope=35, oos=5) accuracy=0.781 version=0.943 refusal=1.000`. The `let vs const` entry still answered with React docs — score logs show retrieval succeeded (top scores 0.31–0.32, above floor) and the model produced a non-refusal answer despite the prompt rule. The structural limit of prompt-engineering refusal on `gpt-4o-mini`: it interprets "let vs const" as React-adjacent enough not to refuse. v1.0 candidates: pre-retrieval topic classifier (one-shot "is this question library-specific?") or top-1-score-gap check (refuse when score sits significantly below in-scope band for the library). Documented the attempt + measurement; default ships with the rule in place since it adds zero cost and might help on other queries.
+- **Metric stability across v0.9 → v0.9.1** is itself a portfolio signal: the production-parity lockfile plumbing wasn't supposed to move the eval (already simulated at v0.9), and the refusal-rule attempt was measured to land unchanged. Both as expected; nothing snuck in unmeasured.
+
 ## [0.9.0] - 2026-06-03
 
 ### Added
@@ -208,7 +220,8 @@ Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope`
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/AshwinUgale/docchat/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/AshwinUgale/docchat/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/AshwinUgale/docchat/compare/v0.7.0...v0.7.1

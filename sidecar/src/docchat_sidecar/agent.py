@@ -100,6 +100,15 @@ the user's pinned version. If the right answer would require an API only \
 available in a newer version (e.g. React 19's use(promise), FastAPI \
 0.100+'s Pydantic-v2 model_dump), say so explicitly - do NOT silently \
 use the newer API as if it were available in the pinned version.
+5. GENERAL-PROGRAMMING REFUSAL (v0.9.1): if the user's question is about \
+general programming concepts that don't belong to any specific library's \
+documentation - variable declarations ("difference between let and \
+const"), control flow, language syntax, generic algorithmic questions, \
+or runtime errors that aren't tied to a pinned library - reply EXACTLY \
+the canonical refusal phrase from rule 2. The user pinned a library \
+because they want library-specific answers; route them elsewhere for \
+language fundamentals rather than dressing up an unrelated chunk as an \
+answer.
 
 When citing, refer to source filenames as they appear in the retrieved \
 context. Keep responses concise unless the user asks for depth."""
@@ -396,7 +405,12 @@ class Agent:
             iterations=iterations,
         )
 
-    async def answer_stream(self, query: str) -> AsyncIterator[StreamEvent]:
+    async def answer_stream(
+        self,
+        query: str,
+        *,
+        pinned_libraries: dict[str, str] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """Run one query and yield streaming protocol events.
 
         v0.7: same multi-iteration ReAct loop as ``answer()`` but uses
@@ -405,6 +419,11 @@ class Agent:
         deltas (the model returns tool_calls only when ``tool_choice``
         is required/auto and it decides to dispatch). The terminal frame
         is ``AssistantStreamFinal`` with citations + tool_used + iterations.
+
+        v0.9.1: ``pinned_libraries`` parity with ``answer()``. The live
+        production sidecar (__main__._run_agent) reads lockfile pins via
+        lockfiles.parse_package_json and passes them through so the
+        agent calls the right collection per query.
 
         ``answer()`` is preserved unchanged for the eval harness; both
         share the same dispatch + memory paths.
@@ -415,7 +434,7 @@ class Agent:
         tool_specs = self._openai_tool_specs(candidate_names)
         past_turns = self._memory.retrieve_relevant(query, k=3)
         messages: list[ChatCompletionMessageParam] = self._initial_messages(
-            query=query, past_turns=past_turns
+            query=query, past_turns=past_turns, pinned_libraries=pinned_libraries
         )
 
         citations: list[Citation] = []
@@ -497,7 +516,12 @@ class Agent:
                     except json.JSONDecodeError:
                         logger.warning("agent_stream: malformed tool args: %r", call["arguments"])
                         args = {}
-                    result = await self._dispatch(tool_name=call["name"], args=args, query=query)
+                    result = await self._dispatch(
+                        tool_name=call["name"],
+                        args=args,
+                        query=query,
+                        pinned_libraries=pinned_libraries,
+                    )
                     citations.extend(result.citations)
                     last_tool_used = call["name"]
                     messages.append(
@@ -624,9 +648,7 @@ class Agent:
         """
         system_content = _SYSTEM_PROMPT
         if pinned_libraries:
-            pins_text = ", ".join(
-                f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items())
-            )
+            pins_text = ", ".join(f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items()))
             system_content += (
                 f"\n\n## Project lockfile pins\n\n"
                 f"The user's project pins: {pins_text}. "
@@ -636,9 +658,7 @@ class Agent:
             )
         if past_turns:
             past_text = "\n\n".join(f"- {t}" for t in past_turns)
-            system_content = (
-                f"{system_content}\n\n## Past Q/A in this workspace\n\n{past_text}"
-            )
+            system_content = f"{system_content}\n\n## Past Q/A in this workspace\n\n{past_text}"
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": query},

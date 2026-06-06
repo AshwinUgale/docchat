@@ -34,7 +34,16 @@ class _FakeAgent:
     def __init__(self, answers: dict[str, _FakeAgentResponse]) -> None:
         self._answers = answers
 
-    async def answer(self, query: str) -> _FakeAgentResponse:
+    async def answer(
+        self,
+        query: str,
+        *,
+        pinned_libraries: dict[str, str] | None = None,
+    ) -> _FakeAgentResponse:
+        # v0.9.1 added the ``pinned_libraries`` kwarg to AgentLike; the
+        # fake accepts and ignores it so runner-side tests don't have to
+        # know about retrieval-routing internals.
+        del pinned_libraries
         return self._answers.get(query, _FakeAgentResponse(text="(no answer)"))
 
 
@@ -139,7 +148,13 @@ async def test_run_corpus_returns_one_result_per_entry(
 
 async def test_run_corpus_captures_runner_errors(react_entry: CorpusEntry) -> None:
     class _BrokenAgent:
-        async def answer(self, query: str) -> _FakeAgentResponse:
+        async def answer(
+            self,
+            query: str,
+            *,
+            pinned_libraries: dict[str, str] | None = None,
+        ) -> _FakeAgentResponse:
+            del query, pinned_libraries
             raise RuntimeError("agent exploded")
 
     results = await run_corpus(agent=_BrokenAgent(), entries=[react_entry], judge=None)
