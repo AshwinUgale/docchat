@@ -79,22 +79,24 @@ The corpus + runner + LLM judge live in [`evals/`](./evals/).
 
 ---
 
-## Install (v1.0)
+## Install
 
-The `.vsix` ships as a release artifact on GitHub. Marketplace listing is the next milestone (see Roadmap).
-
-```powershell
-# Download docchat-1.0.0.vsix from the GitHub Releases page, then:
-code --install-extension docchat-1.0.0.vsix
-```
-
-Requirements: Python 3.11+ on PATH (the extension spawns a sidecar) and Docker for Qdrant (`docker compose up -d qdrant`). The first time you open the panel, the extension reads your project's lockfile (`package.json`, `pyproject.toml`, or `requirements.txt`) and routes queries to the right indexed version per question.
-
-Python 3.11+ on PATH is required (the extension spawns a sidecar). Docker is required for Qdrant (vector store):
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=AshwinUgale.docchat) — search "DocChat" in the Extensions panel, or:
 
 ```powershell
-docker compose up -d qdrant
+code --install-extension AshwinUgale.docchat
 ```
+
+After install, run **`DocChat: Set up sidecar`** from the command palette once. The setup command installs the Python sidecar into `~/.docchat/sidecar/` via `uv sync` (~200MB download, takes 10–30 seconds). It's idempotent — re-run any time to repair a broken install.
+
+**Prerequisites the setup checks for:**
+
+- **Python 3.11+** on PATH ([python.org/downloads](https://www.python.org/downloads/))
+- **uv** package manager on PATH ([docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/))
+- **Docker** for the Qdrant vector store (`docker compose up -d qdrant` after the first install, or set `QDRANT_URL` if you run Qdrant elsewhere)
+- **`OPENAI_API_KEY`** in your environment (or a `.env` file in the workspace root)
+
+The first time you open the panel, DocChat reads your project's lockfile (`package.json`, `pyproject.toml`, or `requirements.txt`) and routes queries to the right indexed version per question.
 
 ---
 

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-06
+
+### Fixed
+- **Fresh marketplace installs are usable.** v1.0.0 shipped the TS extension to the marketplace but assumed the user's system Python already had `docchat_sidecar` installed, which is only true on the developer's box. Every fresh install hit `DocChat: sidecar exited before port line (code 1)` on first panel open. v1.0.1 bundles the sidecar source inside the `.vsix` and ships a setup command that installs it into a per-user managed venv.
+
+### Added
+- **`extension/scripts/prepackage.mjs`** runs as part of `vscode:prepublish`. Copies `sidecar/{pyproject.toml,uv.lock,src/}` into `extension/sidecar-source/`, rewrites the pyproject `readme` path so the bundled standalone install does not try to read `../README.md`, drops a stub `README.md` so hatchling has something to consume during `uv sync`'s build pass. `sidecar-source/` is .gitignored as a build artifact.
+- **`DocChat: Set up sidecar` command** (`docchat.setupSidecar`). One-time per-user install: detects Python 3.11+ + `uv` on PATH, copies bundled source to `~/.docchat/sidecar/`, runs `uv sync` there, verifies the import works, writes the resulting venv python path to `docchat.sidecarPython` at Global scope. Re-runnable to repair a broken install. Missing Python or uv produces an error notification with the install URL — no auto-download (per ADR-014).
+- **Recovery path on first openPanel failure.** When `spawnSidecar` rejects with `sidecar exited before port line` (the canonical "not installed yet" signal), the error notification now offers a **Run Setup** button alongside **View Logs**. One click runs `docchat.setupSidecar`.
+- **`~/.docchat/sidecar/.venv` as a Python-resolution candidate** in `sidecar.ts`, ahead of the dev-workflow `<repo>/sidecar/.venv`. Users who run setup don't need to touch settings — the next `openPanel` finds the managed venv on its own.
+
+### Changed
+- `extension/package.json` → `1.0.1`, `sidecar/pyproject.toml` → `1.0.1`, `sidecar/src/docchat_sidecar/__init__.py` → `1.0.1` (was lagging at `0.0.1`; setup command's verify step now reports a meaningful version).
+- Added `vscode:prepublish` script wiring `prepackage` → `compile` so `vsce package` and `vsce publish` automatically include the bundled source.
+- Registered the new command in `activationEvents` and `contributes.commands`.
+
+### Notes
+- ADR-014 in `.cowork/DECISIONS.md` captures the bundle-vs-PyPI tradeoff and the deliberate non-auto-install of Python/uv.
+- Docker / Qdrant prereq is still user-managed (out of v1.0.1 scope). Setup command only handles the Python sidecar piece.
+
 ## [1.0.0] - 2026-06-03
 
 ### Added

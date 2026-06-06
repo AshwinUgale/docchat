@@ -2,7 +2,7 @@
   "name": "docchat",
   "displayName": "DocChat — version-pinned library docs Q&A",
   "description": "Ask questions about your project's libraries at the exact versions your lockfile pins. Eval-measured: 88% accuracy, 94% version correctness, 100% refusal on out-of-scope.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "AshwinUgale",
   "license": "MIT",
   "engines": {
@@ -32,6 +32,7 @@
     "url": "https://github.com/AshwinUgale/docchat/issues"
   },
   "homepage": "https://github.com/AshwinUgale/docchat#readme",
+  "icon": "icon.png",
   "qna": "marketplace",
   "pricing": "Free",
   "galleryBanner": {
@@ -40,13 +41,19 @@
   },
   "main": "./out/extension.js",
   "activationEvents": [
-    "onCommand:docchat.openPanel"
+    "onCommand:docchat.openPanel",
+    "onCommand:docchat.setupSidecar"
   ],
   "contributes": {
     "commands": [
       {
         "command": "docchat.openPanel",
         "title": "DocChat: Open Chat Panel",
+        "category": "DocChat"
+      },
+      {
+        "command": "docchat.setupSidecar",
+        "title": "DocChat: Set up sidecar (install Python dependencies)",
         "category": "DocChat"
       }
     ],
@@ -56,7 +63,7 @@
         "docchat.sidecarPython": {
           "type": "string",
           "default": "python",
-          "description": "Path to the Python interpreter used to run the sidecar. Default: 'python' on PATH."
+          "description": "Path to the Python interpreter used to run the sidecar. Default: 'python' on PATH. The 'DocChat: Set up sidecar' command writes the managed venv path here automatically."
         },
         "docchat.sidecarPort": {
           "type": "number",
@@ -92,6 +99,8 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run prepackage && npm run compile",
+    "prepackage": "node scripts/prepackage.mjs",
     "compile": "tsc -p .",
     "watch": "tsc -p . -w",
     "lint": "echo 'eslint placeholder'"

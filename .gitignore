@@ -24,6 +24,9 @@ yarn-error.log*
 .vscode-test/
 *.vsix
 out/
+# v1.0.1: bundled sidecar source for the .vsix - build artifact, regenerated
+# by extension/scripts/prepackage.mjs on every package/publish.
+extension/sidecar-source/
 
 # --- Secrets ---
 .env
