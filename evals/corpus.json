@@ -1,6 +1,6 @@
 {
-  "name": "docchat_react_18_2_fastapi_0_95_vue_3_4_v0_8",
-  "description": "40-pair eval corpus spanning three indexed libraries (React 18.2 + FastAPI 0.95 + Vue 3.4). 32 in-scope (16 React + 8 FastAPI + 8 Vue) + 8 out-of-scope refusal targets (4 React-context + 2 FastAPI-context + 2 Vue-context). Each in-scope entry pins forbidden_apis to the next-major equivalents so version_correctness catches regressions (React 19 hooks, Pydantic v2 / FastAPI 0.100+ idioms, Vue 3.5+ APIs like useTemplateRef, Svelte/Angular cross-framework leaks).",
+  "name": "docchat_react_18_2_fastapi_0_95_and_0_100_vue_3_4_v1_0",
+  "description": "48-pair eval corpus across three libraries with FastAPI represented at two pinned versions (0.95 = Pydantic v1, 0.100 = Pydantic v2). 40 in-scope (16 React + 8 FastAPI 0.95 + 8 FastAPI 0.100 + 8 Vue) + 8 out-of-scope refusal targets. The FastAPI 0.100 entries pin Pydantic v1 idioms (.dict, class Config) as forbidden so version_correctness catches a 0.95-era answer being returned for a 0.100 question, and vice versa - the same-library-two-versions demo that exercises v1.0's git-ref resolution and lockfile-pinned routing end to end.",
   "entries": [
     {
       "id": "react_18_useState_basic",
@@ -268,6 +268,81 @@
       "question": "How do I call my FastAPI backend from a React useEffect hook?",
       "expected_answer": "Out of scope as phrased. The React side of this (useEffect + fetch) is an in-scope React question, but DocChat treating this entry as an oos refusal target is intentional: the question crosses libraries and the agent shouldn't try to weave a multi-library answer at v0.6.",
       "out_of_scope": true
+    },
+    {
+      "id": "fastapi_0_100_pydantic_v2_dump",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I serialize a Pydantic model to a dict in FastAPI 0.100?",
+      "expected_answer": "Call model_instance.model_dump() to get a dict, or model_instance.model_dump_json() for a JSON string. FastAPI 0.100 ships with Pydantic v2, which renamed .dict() to .model_dump() and .json() to .model_dump_json().",
+      "wrong_for_other_version": "FastAPI 0.95 ships Pydantic v1 where the methods are .dict() and .json(). Don't suggest those for 0.100.",
+      "expected_apis": ["model_dump"],
+      "forbidden_apis": [".dict()", ".json()"]
+    },
+    {
+      "id": "fastapi_0_100_pydantic_v2_model_config",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I configure a Pydantic model in FastAPI 0.100 (set things like populate_by_name)?",
+      "expected_answer": "Set a class-level model_config attribute (using ConfigDict): class Foo(BaseModel): model_config = ConfigDict(populate_by_name=True). Pydantic v2 replaced the old nested 'class Config:' pattern with model_config.",
+      "wrong_for_other_version": "Pydantic v1 (FastAPI 0.95) uses 'class Config:' as a nested class. Don't suggest that for 0.100.",
+      "expected_apis": ["model_config", "ConfigDict"],
+      "forbidden_apis": ["class Config"]
+    },
+    {
+      "id": "fastapi_0_100_pydantic_v2_field_validator",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I add a custom validator to a Pydantic model field in FastAPI 0.100?",
+      "expected_answer": "Use the @field_validator(...) decorator from pydantic: @field_validator('username') @classmethod def lowercase(cls, v: str) -> str: return v.lower(). Pydantic v2 renamed @validator to @field_validator.",
+      "wrong_for_other_version": "Pydantic v1 (FastAPI 0.95) uses @validator(...). Don't suggest that for 0.100.",
+      "expected_apis": ["field_validator"],
+      "forbidden_apis": ["@validator("]
+    },
+    {
+      "id": "fastapi_0_100_dependency_basic",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I inject a shared dependency into a FastAPI 0.100 route handler?",
+      "expected_answer": "Declare a producer function and pass it through Depends() in the route signature: def get_db(): ... ; @app.get('/x') def handler(db: Annotated[Session, Depends(get_db)]): .... The Annotated form is preferred in 0.100.",
+      "expected_apis": ["Depends", "Annotated"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_100_response_model",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I restrict the fields a FastAPI 0.100 endpoint returns to a subset of an internal model?",
+      "expected_answer": "Set response_model=PublicSchema on the route decorator. FastAPI filters the returned object through that schema regardless of Pydantic version.",
+      "expected_apis": ["response_model"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_100_background_tasks",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I run work after returning a FastAPI 0.100 response without blocking the response?",
+      "expected_answer": "Declare a BackgroundTasks parameter and call background_tasks.add_task(func, *args). The task runs after the response is sent. Same API as 0.95 - this didn't change in the v2 migration.",
+      "expected_apis": ["BackgroundTasks", "add_task"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_100_cors",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I enable CORS in FastAPI 0.100?",
+      "expected_answer": "Use CORSMiddleware: app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:3000'], allow_credentials=True, allow_methods=['*'], allow_headers=['*']). Import from fastapi.middleware.cors. Identical to 0.95.",
+      "expected_apis": ["CORSMiddleware", "add_middleware"],
+      "forbidden_apis": []
+    },
+    {
+      "id": "fastapi_0_100_httpexception",
+      "library": "fastapi",
+      "version": "0.100.0",
+      "question": "How do I return a 404 from a FastAPI 0.100 endpoint when an item isn't found?",
+      "expected_answer": "Raise HTTPException(status_code=404, detail='Item not found'). FastAPI converts it into the matching JSON error response. Same as 0.95.",
+      "expected_apis": ["HTTPException"],
+      "forbidden_apis": []
     },
     {
       "id": "vue_3_4_ref_primitive",

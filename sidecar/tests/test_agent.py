@@ -146,7 +146,13 @@ async def test_agent_answers_query_with_citations() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=False,
+        topic_filter=False,
+    )
 
     response = await agent.answer("how do I use useState?")
 
@@ -168,7 +174,13 @@ async def test_agent_records_qa_to_workspace_memory() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=False,
+        topic_filter=False,
+    )
 
     await agent.answer("how do I use useState?")
     assert memory.manager.episodic.count() == 1
@@ -183,7 +195,13 @@ async def test_agent_emits_canonical_refusal_phrase() -> None:
     openai = _fake_openai_refuses_immediately()
     qdrant = _fake_qdrant_empty()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=False,
+        topic_filter=False,
+    )
 
     response = await agent.answer("how do I configure CORS in Flask?")
     # The eval's is_refusal heuristic relies on this exact substring.
@@ -228,7 +246,13 @@ async def test_agent_caps_at_max_iterations() -> None:
     client.chat.completions = MagicMock()
     client.chat.completions.create = chat
 
-    agent = Agent(openai=client, qdrant=qdrant, memory=memory, max_iterations=2)
+    agent = Agent(
+        openai=client,
+        qdrant=qdrant,
+        memory=memory,
+        max_iterations=2,
+        topic_filter=False,
+    )
     response = await agent.answer("anything")
     assert response.iterations == 2
     assert "iteration limit" in response.text.lower()
@@ -298,7 +322,13 @@ async def test_agent_self_critique_keeps_draft_when_ok() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=True)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=True,
+        topic_filter=False,
+    )
 
     response = await agent.answer("how do I use useState?")
     assert "useState returns a tuple" in response.text
@@ -323,7 +353,13 @@ async def test_agent_self_critique_revises_when_not_ok() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=True)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=True,
+        topic_filter=False,
+    )
 
     response = await agent.answer("how do I use useState?")
     body = response.text.split("Sources:")[0]
@@ -419,7 +455,13 @@ async def test_agent_answer_stream_yields_deltas_and_final() -> None:
     )
     qdrant = _fake_qdrant_with_one_hit()
     memory = _build_memory()
-    agent = Agent(openai=openai, qdrant=qdrant, memory=memory, self_critique=False)
+    agent = Agent(
+        openai=openai,
+        qdrant=qdrant,
+        memory=memory,
+        self_critique=False,
+        topic_filter=False,
+    )
 
     events: list[object] = [evt async for evt in agent.answer_stream("how use useState?")]
 
@@ -453,6 +495,7 @@ async def test_agent_passes_workspace_path_to_tool() -> None:
         qdrant=qdrant,
         memory=memory,
         workspace_path="/tmp/some-workspace",
+        topic_filter=False,
     )
     # We just need the tool to exist and not blow up. The real ripgrep call
     # may produce a "no workspace / no rg" message; both are valid signals.

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 
 import httpx
@@ -33,56 +33,108 @@ __all__ = ["DocIndexer", "collection_name_for"]
 logger = logging.getLogger(__name__)
 
 
-# v0.2 - hand-picked React 18.2 reference pages. The MDX files in this repo
-# track the React 18.2 -> 19 transition cleanly; for a v0.2 demo this is the
-# right subset to prove the end-to-end pipeline. v0.3 expands to the full
-# /content/reference/react/ tree and adds version pinning via git ref.
-_REACT_18_2_URLS: tuple[str, ...] = (
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useState.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useEffect.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useContext.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useReducer.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useMemo.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useCallback.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useRef.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useId.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useSyncExternalStore.md",
-    "https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/reference/react/useTransition.md",
+# v1.0: per-library config + git-ref resolution.
+#
+# Each library declares:
+#   - repo: GitHub repo holding the docs source
+#   - paths: list of doc-source paths relative to repo root
+#   - ref_for(version): callable returning the git ref to fetch from
+#
+# For libraries where the docs site lives in the SAME repo as the
+# released source (tiangolo/fastapi, pallets/flask, etc.), ``ref_for``
+# returns a version tag - so fetching fastapi 0.100.0 actually serves
+# the 0.100.0-era docs with Pydantic v2 idioms. For libraries where
+# the docs live in a separate repo not tagged per release (reactjs/
+# react.dev, vuejs/docs), ``ref_for`` returns ``"main"`` and the chunk
+# metadata still surfaces the user's pinned version via the collection
+# name + chunk header.
+_REACT_DOC_PATHS: tuple[str, ...] = (
+    "src/content/reference/react/useState.md",
+    "src/content/reference/react/useEffect.md",
+    "src/content/reference/react/useContext.md",
+    "src/content/reference/react/useReducer.md",
+    "src/content/reference/react/useMemo.md",
+    "src/content/reference/react/useCallback.md",
+    "src/content/reference/react/useRef.md",
+    "src/content/reference/react/useId.md",
+    "src/content/reference/react/useSyncExternalStore.md",
+    "src/content/reference/react/useTransition.md",
 )
 
-# v0.6: FastAPI 0.95 as the second indexed library, sourced from the
-# fastapi repo's docs tree on master. Same compromise as React (v0.2):
-# we fetch the current-master MD and label it as 0.95 because the user's
-# lockfile pin drives the collection name. v0.7+ resolves git refs.
-_FASTAPI_0_95_URLS: tuple[str, ...] = (
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/first-steps.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/path-params.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/query-params.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/body.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/response-model.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/dependencies/index.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/background-tasks.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/middleware.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/cors.md",
-    "https://raw.githubusercontent.com/tiangolo/fastapi/master/docs/en/docs/tutorial/dependencies/dependencies-with-yield.md",
+_FASTAPI_DOC_PATHS: tuple[str, ...] = (
+    "docs/en/docs/tutorial/first-steps.md",
+    "docs/en/docs/tutorial/path-params.md",
+    "docs/en/docs/tutorial/query-params.md",
+    "docs/en/docs/tutorial/body.md",
+    "docs/en/docs/tutorial/response-model.md",
+    "docs/en/docs/tutorial/dependencies/index.md",
+    "docs/en/docs/tutorial/background-tasks.md",
+    "docs/en/docs/tutorial/middleware.md",
+    "docs/en/docs/tutorial/cors.md",
+    "docs/en/docs/tutorial/dependencies/dependencies-with-yield.md",
 )
 
-# v0.8: Vue 3.4 as the third indexed library. Sourced from vuejs/docs
-# master (markdown). Composition API surface — the part that diverged
-# hard from Options API + Vue 2 and where version-grounded answers
-# matter most.
-_VUE_3_4_URLS: tuple[str, ...] = (
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/reactivity-core.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/reactivity-utilities.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-setup.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-lifecycle.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/composition-api-dependency-injection.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/general.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/api/sfc-script-setup.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/reactivity-fundamentals.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/computed.md",
-    "https://raw.githubusercontent.com/vuejs/docs/main/src/guide/essentials/watchers.md",
+_VUE_DOC_PATHS: tuple[str, ...] = (
+    "src/api/reactivity-core.md",
+    "src/api/reactivity-utilities.md",
+    "src/api/composition-api-setup.md",
+    "src/api/composition-api-lifecycle.md",
+    "src/api/composition-api-dependency-injection.md",
+    "src/api/general.md",
+    "src/api/sfc-script-setup.md",
+    "src/guide/essentials/reactivity-fundamentals.md",
+    "src/guide/essentials/computed.md",
+    "src/guide/essentials/watchers.md",
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LibraryConfig:
+    """Per-library doc-source config used by _urls_for to build URLs.
+
+    Attributes:
+        repo: ``"<owner>/<name>"`` on github.com.
+        paths: Doc paths relative to repo root.
+        ref_for: Maps a pinned version to a git ref. Returns the version
+            itself when the docs are tagged per release (FastAPI); returns
+            ``"main"`` when the docs repo isn't version-tagged (React,
+            Vue) - the chunk metadata still surfaces the user's pinned
+            version via the collection name + chunk header.
+    """
+
+    repo: str
+    paths: tuple[str, ...]
+    ref_for: Callable[[str], str]
+
+
+def _fastapi_ref(version: str) -> str:
+    """FastAPI is tagged per release; the docs at that tag reflect the
+    correct Pydantic generation (v1 for <0.100, v2 for >=0.100)."""
+    return version
+
+
+def _docs_repo_main(_: str) -> str:
+    """React/Vue docs aren't version-tagged; always fetch from main."""
+    return "main"
+
+
+_LIBRARY_CONFIG: dict[str, _LibraryConfig] = {
+    "react": _LibraryConfig(
+        repo="reactjs/react.dev",
+        paths=_REACT_DOC_PATHS,
+        ref_for=_docs_repo_main,
+    ),
+    "fastapi": _LibraryConfig(
+        repo="tiangolo/fastapi",
+        paths=_FASTAPI_DOC_PATHS,
+        ref_for=_fastapi_ref,
+    ),
+    "vue": _LibraryConfig(
+        repo="vuejs/docs",
+        paths=_VUE_DOC_PATHS,
+        ref_for=_docs_repo_main,
+    ),
+}
 
 # OpenAI text-embedding-3-small dimensions (default).
 _DEFAULT_DIMENSIONS = 1536
@@ -166,7 +218,8 @@ class DocIndexer:
                 version=version,
                 message=(
                     f"no indexer wired for {library}@{version} yet "
-                    "(v0.8 supports react + fastapi + vue)"
+                    "(v1.0 supports react + fastapi + vue; FastAPI fetches "
+                    "from the version tag, React and Vue from main)"
                 ),
             )
             return
@@ -292,22 +345,19 @@ class DocIndexer:
 def _urls_for(library: str, version: str) -> tuple[str, ...]:
     """Source URLs for a given (library, version).
 
-    v0.2 shipped React only. v0.6 added FastAPI 0.95 to validate the
-    indexer for non-React libraries. v0.8 adds Vue 3.4 as a third library
-    so the corpus + agent routing exercise three libraries (one Python,
-    two JS frontend frameworks). The (library, version) match is
-    intentionally loose at v0.8: any react version maps to the React
-    URLs, etc. Per-version branching lands at v1.0 with git-ref resolution.
+    v1.0: per-library git-ref resolution via ``_LIBRARY_CONFIG``. For
+    FastAPI the ref is the version tag (so 0.95.2 vs 0.100.0 actually
+    fetch different content - the same-library-two-versions demo).
+    React + Vue still fetch from ``main`` because their docs repos
+    aren't version-tagged; the chunk metadata still surfaces the
+    user's pinned version via the collection name + chunk header.
     """
-    del version
-    lib = library.lower()
-    if lib == "react":
-        return _REACT_18_2_URLS
-    if lib == "fastapi":
-        return _FASTAPI_0_95_URLS
-    if lib == "vue":
-        return _VUE_3_4_URLS
-    return ()
+    config = _LIBRARY_CONFIG.get(library.lower())
+    if config is None:
+        return ()
+    ref = config.ref_for(version)
+    base = f"https://raw.githubusercontent.com/{config.repo}/{ref}"
+    return tuple(f"{base}/{path}" for path in config.paths)
 
 
 def _api_name_from_url(url: str) -> str:

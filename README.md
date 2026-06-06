@@ -2,11 +2,11 @@
 
 > A VS Code extension that answers questions about your project's libraries — using the docs for the exact versions your project pins.
 
-[![status](https://img.shields.io/badge/status-alpha-orange)](#)
+[![status](https://img.shields.io/badge/status-production--ready-brightgreen)](#)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![version](https://img.shields.io/badge/version-0.9.0-blue)](./CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.0-blue)](./CHANGELOG.md)
 
-**Status:** v0.9 — multi-iteration ReAct over three indexed libraries (React 18.2 + FastAPI 0.95 + Vue 3.4), streaming responses, lockfile-pinned retrieval routing, per-query score logging. Marketplace publish at v1.0.
+**Status:** v1.0 — production release. Multi-iteration ReAct over three indexed libraries (React 18.2, FastAPI at 0.95 AND 0.100 side-by-side, Vue 3.4), per-library git-ref resolution, lockfile-pinned retrieval routing for both Node and Python projects, pre-retrieval topic classifier, streaming responses, click-to-open citations, settings drawer.
 
 ---
 
@@ -62,7 +62,8 @@ uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --outpu
 | v0.6.1 | 0.714 | 0.875 | 8 / 24 | changelog regex fix |
 | v0.7 | 0.882 | 0.944 | 18 / 24 | per-library floors + version anchoring |
 | v0.8 | 0.889 | 0.895 | 19 / 32 | chunk metadata + Vue 3.4 (3rd library) + critique reverted |
-| **v0.9** | **0.781** | **0.943** | **35 / 40** | pinned_libraries fix (routing bug) + api_name filter + score logging |
+| v0.9 | 0.781 | 0.943 | 35 / 40 | pinned_libraries fix (routing bug) + api_name filter + score logging |
+| **v1.0** | **0.675** | **0.854** | **41 / 48** | git-ref resolution + FastAPI 0.95 & 0.100 + Python lockfiles + topic classifier |
 
 The portfolio narrative is the iteration, not just the final number. Every regression got measured, named, and patched — including a v0.6.1 prompt-softening attempt that was tried and reverted with eval data ([see CHANGELOG](./CHANGELOG.md)).
 
@@ -78,14 +79,16 @@ The corpus + runner + LLM judge live in [`evals/`](./evals/).
 
 ---
 
-## Install (v0.9)
+## Install (v1.0)
 
-The `.vsix` ships as a release artifact on GitHub. Marketplace publish lands at v1.0.
+The `.vsix` ships as a release artifact on GitHub. Marketplace listing is the next milestone (see Roadmap).
 
 ```powershell
-# Download docchat-0.9.0.vsix from the GitHub Releases page, then:
-code --install-extension docchat-0.9.0.vsix
+# Download docchat-1.0.0.vsix from the GitHub Releases page, then:
+code --install-extension docchat-1.0.0.vsix
 ```
+
+Requirements: Python 3.11+ on PATH (the extension spawns a sidecar) and Docker for Qdrant (`docker compose up -d qdrant`). The first time you open the panel, the extension reads your project's lockfile (`package.json`, `pyproject.toml`, or `requirements.txt`) and routes queries to the right indexed version per question.
 
 Python 3.11+ on PATH is required (the extension spawns a sidecar). Docker is required for Qdrant (vector store):
 
@@ -166,8 +169,9 @@ To run the extension in a dev host: open `extension/` in VS Code and press **F5*
 
 ## Roadmap
 
-- **v0.9** (current) — per-query score logging surfaced a routing bug; `pinned_libraries` plumbing fixed it (recall 19 → 35 / 40); `api_name` retrieval filter; Vue floor recalibrated
-- **v1.0** — production sidecar reads lockfile pins (today only the eval runner does), git-ref resolution + FastAPI 0.100 (same-library-two-versions demo), Marketplace publish, auto-install sidecar via bundled venv, icon
+- **v1.0** (current) — production release. Per-library git-ref resolution; FastAPI 0.95 + 0.100 side-by-side; `pyproject.toml` + `requirements.txt` lockfile parsers; pre-retrieval topic classifier closes the general-programming-question leak; production-stable classifier.
+- **v1.0.x** — auto-install sidecar (bundled venv via `uv` shipped with the `.vsix`); Marketplace publish (publisher account + icon + `vsce publish`)
+- **v1.1+** — 150-pair × 5-library corpus expansion; hybrid sparse + dense retrieval if any single library's recall plateaus; more lockfile formats (Cargo.toml, go.mod, Gemfile)
 
 ---
 

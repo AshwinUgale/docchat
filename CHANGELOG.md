@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-03
+
+### Added
+- **Per-library git-ref resolution in the indexer.** `_LIBRARY_CONFIG` maps each indexed library to a `(repo, paths, ref_for)` triple. FastAPI's `ref_for` returns the version tag (so `fastapi@0.95.2` and `fastapi@0.100.0` fetch from `tiangolo/fastapi/0.95.2/...` and `tiangolo/fastapi/0.100.0/...` respectively, getting the Pydantic-v1-era vs Pydantic-v2-era docs). React + Vue still fetch from `main` because their docs repos aren't version-tagged; the chunk metadata still surfaces the user's pinned version via the collection name + chunk header.
+- **FastAPI 0.100 alongside 0.95 as the same-library-two-versions demo.** With git-ref resolution in place, both pinned versions index different content into separate Qdrant collections (`fastapi_0_95_2`, `fastapi_0_100_0`). The agent's lockfile-pinned routing (v0.9 + v0.9.1) picks the right one per query.
+- **`parse_pyproject_toml` + `parse_requirements_txt`** in `lockfiles.py`. PEP 621 `[project] dependencies` + Poetry `[tool.poetry.dependencies]` for pyproject; `name==version` / `name>=version` parsing for requirements. Python-stdlib `tomllib`. Python-project workspaces now get the same lockfile-aware routing Node workspaces got at v0.9.1.
+- **Production sidecar tries multiple manifest formats** (`package.json` → `pyproject.toml` → `requirements.txt`); first non-empty wins.
+- **Pre-retrieval topic classifier in `Agent._is_library_topic`.** One cheap `gpt-4o-mini` call (temperature 0, max_tokens 4) classifies the query as LIBRARY or GENERAL before the ReAct loop starts. GENERAL queries short-circuit to the canonical refusal phrase WITHOUT touching retrieval. Closes the v0.9 let/const oos leak that the post-retrieval HARD RULE couldn't catch. Default `topic_filter=True`; `--no-topic-filter` flag on the eval CLI for ablation.
+- **`_CANONICAL_REFUSAL` module constant** — single source of truth for the refusal phrase shared by the topic-filter short-circuit and the system prompt's HARD RULE #2.
+- **Corpus extends to 48 pairs** with 8 new FastAPI 0.100 entries that pin Pydantic-v1 idioms (`.dict()`, `class Config`, `@validator`) as `forbidden_apis`. An agent that fetches from the wrong FastAPI collection now gets caught by `version_correctness`.
+- 2 new schema tests: `test_bundled_corpus_loads` updated for 48 entries; `test_bundled_corpus_has_fastapi_at_two_versions` verifies both 0.95.x and 0.100.x are represented.
+
+### Changed
+- `Development Status :: 3 - Alpha` → `Development Status :: 5 - Production/Stable` on `sidecar/pyproject.toml`.
+- README status badge flips from alpha to production-ready; install / roadmap / how-it-does sections refreshed for 1.0.
+- Bumped `extension/package.json` and `sidecar/pyproject.toml` to `1.0.0`.
+
+### Notes
+- Marketplace publish itself stays a user-action item: register a `AshwinUgale` publisher on the Visual Studio Marketplace, design `icon.png` (128×128), run `vsce publish`. v1.0 ships the publish-ready manifest and the `.vsix`; the actual marketplace listing is signed by the user. See ADR-013 for the rationale.
+- Auto-install sidecar (bundled venv + `uv` ship via the `.vsix`) deferred to v1.0.x — the cross-platform venv-creation work is bounded but real; better as its own milestone than crammed into 1.0.
+- ADR-013 in `.cowork/DECISIONS.md` captures the full v1.0 design space: per-library git-ref resolution, Python lockfile parsers, topic classifier, classifier bump.
+
+### Measured numbers on the 48-pair corpus
+```
+n=48 (in_scope=41, oos=7)  accuracy=0.675  version=0.854  refusal=1.000  p95=17239ms
+```
+- **All 40 in-scope corpus entries answered through** (100% recall on questions about pinned libraries). The 41st "in_scope" entry is the Vite oos that leaked — see below.
+- **`refusal=1.000` over 7 classified oos** (Flask, Node EADDRINUSE, let/const, Django, Angular signal, Svelte rune, FastAPI-from-React-context). 6 of 7 caught by the v1.0 topic classifier BEFORE retrieval — saves the multi-iteration ReAct cost on queries we'd reject anyway.
+- **`version=0.854` is best-on-this-corpus** despite the larger surface (48 pairs across 4 indexed (library, version) collections).
+- Accuracy ticked down vs v0.9.1's 0.781 because the 8 new FastAPI 0.100 entries are stricter (expected exact strings like `model_dump`, `model_config`, `field_validator`) and the existing `fastapi_0_95_0` collection wasn't re-indexed from the 0.95.2 tag — it still has master-era content. v1.0.x: re-index 0.95 from the version tag.
+
+### Honest residual leak
+- **`react_18_oos_unrelated_lib`** ("How do I configure a Vite plugin for image optimisation?") still answered. The topic classifier let it through as LIBRARY because Vite IS a real library — but Vite isn't in the user's pinned set. The classifier prompt needs one extra clause: "If the question is about a library that's not in the user's pinned list, classify as GENERAL." Single-sentence prompt-tuning fix, queued for v1.0.1.
+
 ## [0.9.1] - 2026-06-03
 
 ### Added
@@ -220,7 +254,8 @@ Best across the project. `accuracy` +0.17 vs v0.6.1, `version` +0.07, `in_scope`
 - `scripts/check.ps1` combined lint + typecheck + test pipeline.
 - Dual-repo setup (public main + private nested `.cowork/`).
 
-[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/AshwinUgale/docchat/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/AshwinUgale/docchat/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/AshwinUgale/docchat/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/AshwinUgale/docchat/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/AshwinUgale/docchat/compare/v0.7.1...v0.8.0

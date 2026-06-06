@@ -16,8 +16,10 @@ def test_bundled_corpus_loads() -> None:
     corpus = TypeAdapter(Corpus).validate_python(data)
     assert corpus.name
     assert corpus.entries
-    # v0.8 corpus: 16 React + 8 FastAPI + 8 Vue in-scope + 8 oos = 40 entries.
-    assert len(corpus.entries) == 40
+    # v1.0 corpus: 16 React + 8 FastAPI 0.95 + 8 FastAPI 0.100 + 8 Vue
+    # in-scope + 8 oos = 48 entries (FastAPI represented at two pinned
+    # versions for the same-library-two-versions demo).
+    assert len(corpus.entries) == 48
 
 
 def test_bundled_corpus_has_in_and_out_of_scope() -> None:
@@ -26,9 +28,22 @@ def test_bundled_corpus_has_in_and_out_of_scope() -> None:
     corpus = TypeAdapter(Corpus).validate_python(data)
     in_scope = [e for e in corpus.entries if not e.out_of_scope]
     oos = [e for e in corpus.entries if e.out_of_scope]
-    # v0.8 mix: 32 in-scope (16 React + 8 FastAPI + 8 Vue) + 8 oos.
-    assert len(in_scope) == 32
+    # v1.0 mix: 40 in-scope (16 React + 16 FastAPI across two versions + 8 Vue) + 8 oos.
+    assert len(in_scope) == 40
     assert len(oos) == 8
+
+
+def test_bundled_corpus_has_fastapi_at_two_versions() -> None:
+    """v1.0: FastAPI is represented at both 0.95.x and 0.100.x in the corpus,
+    exercising the same-library-two-versions routing the git-ref work enables."""
+    corpus_path = Path(__file__).resolve().parent.parent / "corpus.json"
+    data = json.loads(corpus_path.read_text(encoding="utf-8"))
+    corpus = TypeAdapter(Corpus).validate_python(data)
+    fastapi_versions = {
+        e.version for e in corpus.entries if e.library == "fastapi"
+    }
+    assert any(v.startswith("0.95") for v in fastapi_versions)
+    assert any(v.startswith("0.100") for v in fastapi_versions)
 
 
 def test_bundled_corpus_covers_all_three_indexed_libraries() -> None:

@@ -86,6 +86,15 @@ def _parser() -> argparse.ArgumentParser:
             "on/off (default is on)."
         ),
     )
+    p.add_argument(
+        "--no-topic-filter",
+        action="store_true",
+        help=(
+            "Disable the v1.0 pre-retrieval topic classifier. Use this to "
+            "measure the classifier's contribution to refusal_rate "
+            "(default is on)."
+        ),
+    )
     return p
 
 
@@ -108,6 +117,7 @@ async def _run(args: argparse.Namespace) -> RunSummary:
         qdrant=qdrant,
         memory=memory,
         self_critique=not args.no_self_critique,
+        topic_filter=not args.no_topic_filter,
     )
     judge = None if args.no_judge else LLMJudge(openai=openai)
 
@@ -120,6 +130,7 @@ async def _run(args: argparse.Namespace) -> RunSummary:
             "n_entries_run": len(entries),
             "judge_enabled": not args.no_judge,
             "self_critique": not args.no_self_critique,
+            "topic_filter": not args.no_topic_filter,
             "qdrant_url": args.qdrant_url,
         },
         metrics=metrics,

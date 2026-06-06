@@ -179,19 +179,33 @@ async def _run_agent(ws: WebSocket, query: str) -> None:
     # land at v1.0 alongside the auto-install sidecar work.
     pinned_libraries: dict[str, str] | None = None
     if workspace_path:
-        try:
-            pkg_json = Path(workspace_path) / "package.json"
-            if pkg_json.is_file():
-                pins = parse_package_json(pkg_json)
-                pinned_libraries = {p.library.lower(): p.version for p in pins}
-                if pinned_libraries:
-                    logger.warning(
-                        "loaded %d lockfile pins from %s",
-                        len(pinned_libraries),
-                        pkg_json,
-                    )
-        except Exception as exc:
-            logger.warning("lockfile parse failed (continuing without pins): %s", exc)
+        from docchat_sidecar.lockfiles import (
+            parse_pyproject_toml,
+            parse_requirements_txt,
+        )
+
+        # Local rename to avoid shadowing the WebSocket parameter ``ws``.
+        ws_dir = Path(workspace_path)
+        # v1.0: try each manifest format in order; first non-empty wins.
+        # package.json beats Python files if both exist (Node project).
+        manifests = [
+            ("package.json", ws_dir / "package.json", parse_package_json),
+            ("pyproject.toml", ws_dir / "pyproject.toml", parse_pyproject_toml),
+            ("requirements.txt", ws_dir / "requirements.txt", parse_requirements_txt),
+        ]
+        for label, candidate, parser in manifests:
+            if not candidate.is_file():
+                continue
+            try:
+                pins = parser(candidate)
+            except Exception as exc:
+                logger.warning("%s parse failed (trying next manifest): %s", label, exc)
+                continue
+            if not pins:
+                continue
+            pinned_libraries = {p.library.lower(): p.version for p in pins}
+            logger.warning("loaded %d lockfile pins from %s", len(pinned_libraries), candidate)
+            break
 
     try:
         async for event in agent.answer_stream(query, pinned_libraries=pinned_libraries):

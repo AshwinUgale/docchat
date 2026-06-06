@@ -50,6 +50,11 @@ __all__ = ["Agent", "AgentResponse"]
 # Server-message events the streaming agent can emit per query.
 StreamEvent = AssistantTextDelta | AssistantStreamFinal
 
+# v1.0: canonical refusal phrase shared by the topic-filter short-circuit and
+# the system prompt's HARD RULE #2. Single source of truth so the eval's
+# is_refusal heuristic always matches both paths.
+_CANONICAL_REFUSAL = "I don't have documentation for that in this workspace's indexed libraries."
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,6 +175,7 @@ class Agent:
         default_version: str = "18.2.0",
         max_iterations: int = 3,
         self_critique: bool = False,
+        topic_filter: bool = True,
     ) -> None:
         self._openai = openai
         self._memory = memory
@@ -187,6 +193,15 @@ class Agent:
         # the feature stays as opt-in so future prompt tuning or different
         # ablations can revisit it. See ADR-011 and CHANGELOG v0.8.0.
         self._self_critique = self_critique
+        # v1.0: pre-retrieval topic classifier. One cheap LLM call before
+        # the ReAct loop decides "library-specific" vs "general programming".
+        # General-programming questions short-circuit to the canonical
+        # refusal phrase WITHOUT retrieval (closes the v0.9 let/const oos
+        # leak that HARD RULE #5 couldn't catch on its own). Cost: ~1
+        # extra gpt-4o-mini call (~$0.00005, ~500ms). Defaults ON for
+        # v1.0; flip OFF for ablation runs via the kwarg or
+        # ``--no-topic-filter`` on the eval CLI.
+        self._topic_filter = topic_filter
 
         self._search_docs = SearchDocsTool(qdrant=qdrant, openai=openai)
         self._search_workspace = SearchWorkspaceCodeTool(workspace_path=workspace_path)
@@ -218,7 +233,24 @@ class Agent:
         tool-call ``version`` arg to match the pin for that library. This
         closes the bug where the LLM was inferring versions from question
         text and hitting collections that don't exist (fastapi_0_95_2 etc.).
+
+        v1.0: pre-retrieval topic classifier short-circuits to the
+        canonical refusal phrase when the query is general programming
+        (closes the v0.9 let/const oos leak that prompt-only couldn't).
         """
+        # 0. v1.0 topic filter: skip retrieval entirely for general-programming.
+        if self._topic_filter and not await self._is_library_topic(
+            query, pinned_libraries=pinned_libraries
+        ):
+            logger.info("topic filter: refusing general-programming query %r", query)
+            return self._finalize(
+                query=query,
+                answer_text=_CANONICAL_REFUSAL,
+                citations=[],
+                tool_used="(topic_filter)",
+                iterations=0,
+            )
+
         # 1. ToolPicker preselects candidate tools. At v0.6 with 3 tools
         #    we always pass all of them through; the LLM picks per iteration.
         candidate_names = [s.id for s in self._picker.select(query, k=10)]
@@ -328,6 +360,73 @@ class Agent:
     # Internals
     # ------------------------------------------------------------------
 
+    async def _is_library_topic(
+        self,
+        query: str,
+        pinned_libraries: dict[str, str] | None = None,
+    ) -> bool:
+        """v1.0 pre-retrieval topic classifier.
+
+        Returns True if the query looks library-specific (proceed with
+        normal ReAct), False if it looks like general programming /
+        language fundamentals (short-circuit to refusal). One cheap
+        ``gpt-4o-mini`` call at temperature 0. Defaults to True on any
+        parse failure so we don't accidentally refuse real library
+        questions just because the classifier glitched.
+
+        v1.0 first-run learning: without project context the classifier
+        called legitimate React questions (e.g. "How do I avoid
+        recomputing... on every render?") GENERAL because they didn't
+        mention "React" explicitly. v1.0 now passes ``pinned_libraries``
+        into the prompt so the classifier leans LIBRARY for any question
+        that's plausibly about one of the user's pinned libs.
+        """
+        pins_clause = ""
+        if pinned_libraries:
+            pin_summary = ", ".join(
+                f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items())
+            )
+            pins_clause = (
+                f"\n\nThe user's project pins these libraries: {pin_summary}. "
+                "If the question is plausibly about how to do something in "
+                "one of those libraries (even if it doesn't name the library "
+                "explicitly - words like 'render', 'component', 'route', "
+                "'dependency', 'hook', 'reactive' usually indicate so), "
+                "classify as LIBRARY."
+            )
+        prompt = (
+            "You are a one-shot classifier inside a code-editor extension. "
+            "The user is asking a question; their project has indexed "
+            "documentation for specific software libraries (e.g. React, "
+            "FastAPI, Vue). Decide which kind of question it is:\n\n"
+            "- LIBRARY: about a specific library / framework / API. "
+            "Examples: 'how do I use useState in React', 'what does "
+            "Depends() do in FastAPI', 'computed vs watch in Vue', "
+            "'avoid re-render when prop changes'.\n"
+            "- GENERAL: about language fundamentals (let/const, hoisting), "
+            "operating-system errors (EADDRINUSE), or generic CS concepts "
+            "(closures, big-O) that aren't tied to any library."
+            f"{pins_clause}\n\n"
+            f"USER QUESTION:\n{query}\n\n"
+            "Reply with EXACTLY one word: LIBRARY or GENERAL."
+        )
+        try:
+            response = await self._openai.chat.completions.create(
+                model=self._chat_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=4,
+            )
+        except Exception as exc:
+            logger.warning("topic classifier call failed (defaulting LIBRARY): %s", exc)
+            return True
+        reply = (response.choices[0].message.content or "").strip().upper()
+        # Accept "LIBRARY", "LIBRARY.", "LIBRARY!" etc; treat anything that
+        # starts with "GENERAL" as the refuse signal. Other shapes (empty,
+        # whitespace, unexpected text) default to LIBRARY - safer to attempt
+        # retrieval than to falsely refuse a real library question.
+        return not reply.startswith("GENERAL")
+
     async def _critique(self, *, query: str, draft: str, context_blocks: list[str]) -> str:
         """v0.8 self-critique pass: re-read the draft against the retrieved
         context. If the draft introduced APIs / behaviour that don't appear
@@ -411,6 +510,22 @@ class Agent:
         *,
         pinned_libraries: dict[str, str] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        # v1.0 topic filter: short-circuit to refusal for general-programming.
+        if self._topic_filter and not await self._is_library_topic(
+            query, pinned_libraries=pinned_libraries
+        ):
+            logger.info("topic filter: refusing general-programming query %r", query)
+            yield AssistantTextDelta(text=_CANONICAL_REFUSAL, chunk_index=0)
+            yield AssistantStreamFinal(
+                citations=[],
+                tool_used="(topic_filter)",
+                iterations=0,
+            )
+            try:
+                self._memory.record_qa(query=query, answer=_CANONICAL_REFUSAL, citations=[])
+            except Exception as exc:  # pragma: no cover
+                logger.warning("failed to record topic-filter refusal in Mneme: %s", exc)
+            return
         """Run one query and yield streaming protocol events.
 
         v0.7: same multi-iteration ReAct loop as ``answer()`` but uses
