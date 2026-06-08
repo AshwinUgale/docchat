@@ -177,6 +177,14 @@ To run the extension in a dev host: open `extension/` in VS Code and press **F5*
 
 ---
 
+## Related projects
+
+Part of a 4-project portfolio of production AI engineering:
+
+- **[mneme](https://github.com/AshwinUgale/mneme)** ([PyPI as smolAmem](https://pypi.org/project/smolAmem/)) — DocChat's per-workspace memory layer. Multi-tier memory with TTL + decay-based forgetting.
+- **[toolpicker](https://github.com/AshwinUgale/toolpicker)** ([PyPI](https://pypi.org/project/toolpicker/)) — DocChat's agent tool-routing layer. Hybrid BM25 + embeddings + optional intent classifier.
+- **[docchat-server](https://github.com/AshwinUgale/docchat-mcp)** ([PyPI](https://pypi.org/project/docchat-server/)) — Sibling project. The same version-pinned retrieval as an MCP server (for Claude Code / Cursor users who want the tool surface without the chat panel).
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
