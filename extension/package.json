@@ -2,7 +2,7 @@
   "name": "docchat",
   "displayName": "DocChat — version-pinned library docs Q&A",
   "description": "Ask questions about your project's libraries at the exact versions your lockfile pins. Eval-measured: 88% accuracy, 94% version correctness, 100% refusal on out-of-scope.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "AshwinUgale",
   "license": "MIT",
   "engines": {
@@ -42,7 +42,8 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onCommand:docchat.openPanel",
-    "onCommand:docchat.setupSidecar"
+    "onCommand:docchat.setupSidecar",
+    "onCommand:docchat.setOpenAIKey"
   ],
   "contributes": {
     "commands": [
@@ -54,6 +55,11 @@
       {
         "command": "docchat.setupSidecar",
         "title": "DocChat: Set up sidecar (install Python dependencies)",
+        "category": "DocChat"
+      },
+      {
+        "command": "docchat.setOpenAIKey",
+        "title": "DocChat: Set OpenAI API Key",
         "category": "DocChat"
       }
     ],

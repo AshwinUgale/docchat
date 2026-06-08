@@ -6,6 +6,10 @@
  *   2. ~/.docchat/sidecar/.venv/... - managed venv from `DocChat: Set up sidecar`.
  *   3. <repo>/sidecar/.venv/... - dev workflow (F5 from source).
  *   4. python on PATH - last-ditch fallback.
+ *
+ * v1.0.2 - spawnSidecar accepts an envOverrides param. The extension reads
+ * the OPENAI_API_KEY from VS Code SecretStorage and passes it here so the
+ * sidecar process inherits it even when the user's shell doesn't have it.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -21,6 +25,10 @@ export interface SidecarHandle {
 }
 
 const PORT_LINE_RE = /^DOCCHAT_SIDECAR_PORT=(\d+)\s*$/;
+// v1.0.2 - the sidecar prints this exact line + exits with code 2 when
+// OPENAI_API_KEY is missing. The extension matches on this string to
+// surface a "Set Key" recovery action.
+const KEY_MISSING_LINE = "DOCCHAT_SIDECAR_ERROR=missing_openai_api_key";
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_POLL_INTERVAL_MS = 100;
 
@@ -75,9 +83,26 @@ async function waitForHealth(port: number): Promise<void> {
   throw new Error(`sidecar /health did not respond within ${HEALTH_TIMEOUT_MS}ms`);
 }
 
+/**
+ * v1.0.2 - merge process.env with caller-provided overrides into a clean
+ * Record<string, string> the child_process API accepts. Caller-provided
+ * values win; undefined values are dropped.
+ */
+function buildSpawnEnv(
+  overrides: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === undefined) continue;
+    env[k] = v;
+  }
+  return env;
+}
+
 export async function spawnSidecar(
   extensionPath: string,
-  outputChannel: vscode.OutputChannel
+  outputChannel: vscode.OutputChannel,
+  envOverrides: Record<string, string | undefined> = {}
 ): Promise<SidecarHandle> {
   const python = resolvePython(extensionPath);
   outputChannel.appendLine(`[docchat] spawning sidecar: ${python} -m docchat_sidecar --port 0`);
@@ -85,6 +110,7 @@ export async function spawnSidecar(
   const proc = spawn(python, ["-m", "docchat_sidecar", "--port", "0"], {
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
+    env: buildSpawnEnv(envOverrides),
   });
 
   proc.stderr?.on("data", (chunk: Buffer) => {
@@ -103,6 +129,13 @@ export async function spawnSidecar(
   return { process: proc, port };
 }
 
+/**
+ * Read stdout line-by-line until we see DOCCHAT_SIDECAR_PORT=<N>.
+ *
+ * v1.0.2 - also detects the KEY_MISSING_LINE marker and throws a special
+ * recognizable error so the openPanel handler can surface the "Set Key"
+ * recovery flow rather than the generic "exited before port line" message.
+ */
 function readPortFromStdout(
   proc: ChildProcess,
   outputChannel: vscode.OutputChannel
@@ -113,11 +146,16 @@ function readPortFromStdout(
       return;
     }
     let buffer = "";
+    let sawKeyMissing = false;
     const onData = (chunk: Buffer): void => {
       buffer += chunk.toString();
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? "";
       for (const line of lines) {
+        if (line.trim() === KEY_MISSING_LINE) {
+          sawKeyMissing = true;
+          continue;
+        }
         const match = PORT_LINE_RE.exec(line);
         if (match) {
           proc.stdout?.off("data", onData);
@@ -128,9 +166,13 @@ function readPortFromStdout(
       }
     };
     proc.stdout.on("data", onData);
-    proc.once("exit", (code) =>
-      reject(new Error(`sidecar exited before port line (code ${code})`))
-    );
+    proc.once("exit", (code) => {
+      if (sawKeyMissing) {
+        reject(new Error("OPENAI_API_KEY is not set"));
+        return;
+      }
+      reject(new Error(`sidecar exited before port line (code ${code})`));
+    });
   });
 }
 

@@ -39,6 +39,25 @@ with contextlib.suppress(ImportError):
     _env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
     load_dotenv(_env_path, encoding="utf-8-sig")
 
+# v1.0.2 - fail-fast on missing OPENAI_API_KEY so the extension can detect
+# the "no key" case via stderr and surface a one-click recovery action,
+# instead of the original behavior of silently spawning and failing at the
+# first embed call with an opaque OpenAI AuthenticationError.
+if not os.environ.get("OPENAI_API_KEY"):
+    print(
+        "DOCCHAT_SIDECAR_ERROR=missing_openai_api_key",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        "OPENAI_API_KEY is not set. DocChat uses OpenAI's embeddings API "
+        "for retrieval. Run \"DocChat: Set OpenAI API Key\" from the "
+        "command palette to store one in VS Code SecretStorage.",
+        file=sys.stderr,
+        flush=True,
+    )
+    sys.exit(2)
+
 from docchat_sidecar import __version__
 from docchat_sidecar.protocol import (
     AssistantStreamFinal,

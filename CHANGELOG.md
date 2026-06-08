@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-08
+
+### Fixed
+- **OPENAI_API_KEY onboarding.** v1.0.1 fixed the sidecar install but the next user-facing failure was a confusing OpenAI auth error on the first query (the sidecar's `AsyncOpenAI()` constructor didn't validate, so the failure surfaced 2-3 seconds later inside the streaming-response handler). v1.0.2 closes this gap with a real key-management UI.
+
+### Added
+- **`DocChat: Set OpenAI API Key` command** (`docchat.setOpenAIKey`). Prompts via VS Code's `showInputBox` with `password: true` so the key never appears in shell history, screenshots, or settings.json. Stored in `vscode.SecretStorage` (encrypted, per-user, OS-keychain-integrated). Re-running the command overwrites the stored value. Validates the input starts with `sk-` and is plausibly long enough.
+- **`sidecar.ts` passes the stored key to the spawned sidecar via `env` override.** A new `envOverrides` parameter on `spawnSidecar` merges into the child process's environment, so the sidecar inherits the key whether or not the user's shell has it set.
+- **Sidecar `__main__.py` fail-fast** on missing `OPENAI_API_KEY`. Prints `DOCCHAT_SIDECAR_ERROR=missing_openai_api_key` to stdout + a human-readable explanation to stderr + exits with code 2. The extension's `readPortFromStdout` recognises the marker and rejects with `"OPENAI_API_KEY is not set"` instead of the generic `"sidecar exited before port line"` message.
+- **`openPanel` error recovery for missing key.** When the panel-open path throws the new key-missing error, the error notification shows a **Set Key** button alongside **View Logs**. One click runs `docchat.setOpenAIKey`; on completion the user is offered to re-open the panel.
+
+### Changed
+- `extension/package.json` → `1.0.2`, `sidecar/pyproject.toml` → `1.0.2`, `sidecar/src/docchat_sidecar/__init__.py` → `1.0.2`.
+- New command registered in `activationEvents` and `contributes.commands`.
+- Folds in the previously-unpublished v1.0.1 fixes (sidecar source bundling via `prepackage.mjs`, `DocChat: Set up sidecar` command, `~/.docchat/sidecar/.venv` discovery in `sidecar.ts`). The published Marketplace listing goes straight from `1.0.0` to `1.0.2`.
+
+### Notes
+- SecretStorage takes priority over shell env: if both are set, the SecretStorage value wins. Shell env is the fallback for dev workflows + headless eval runs that don't go through the extension UI.
+- The key is never logged. The fail-fast stderr message names the recovery command, not the key value.
+
 ## [1.0.1] - 2026-06-06
 
 ### Fixed
