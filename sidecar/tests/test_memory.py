@@ -53,6 +53,18 @@ def test_record_qa_persists_to_episodic() -> None:
     assert mgr.episodic.count() == 1
 
 
+def test_clear_wipes_recorded_turns() -> None:
+    mgr = _manager_with_in_memory_backend("test_agent")
+    wm = WorkspaceMemory(manager=mgr)
+    wm.record_qa(query="q1", answer="a1", citations=[])
+    wm.record_qa(query="q2", answer="a2", citations=[])
+    assert mgr.episodic.count() == 2
+    wm.clear()
+    assert mgr.episodic.count() == 0
+    # A post-clear retrieval sees nothing from before the reset.
+    assert wm.retrieve_relevant("q1", k=3) == []
+
+
 def test_retrieve_relevant_surfaces_past_turns() -> None:
     mgr = _manager_with_in_memory_backend("test_agent")
     wm = WorkspaceMemory(manager=mgr)

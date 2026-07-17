@@ -29,10 +29,15 @@ class _FakeAgentResponse:
 
 
 class _FakeAgent:
-    """Configurable agent that returns canned answers per question."""
+    """Configurable agent that returns canned answers per question.
+
+    Exposes ``reset_memory`` and counts calls so the runner's memory-isolation
+    behaviour can be asserted without a real Mneme backend.
+    """
 
     def __init__(self, answers: dict[str, _FakeAgentResponse]) -> None:
         self._answers = answers
+        self.reset_calls = 0
 
     async def answer(
         self,
@@ -45,6 +50,9 @@ class _FakeAgent:
         # know about retrieval-routing internals.
         del pinned_libraries
         return self._answers.get(query, _FakeAgentResponse(text="(no answer)"))
+
+    def reset_memory(self) -> None:
+        self.reset_calls += 1
 
 
 @pytest.fixture
@@ -144,6 +152,37 @@ async def test_run_corpus_returns_one_result_per_entry(
     assert len(results) == 2
     assert results[0].entry_id == react_entry.id
     assert results[1].entry_id == oos_entry.id
+
+
+async def test_run_corpus_isolates_memory_by_default(
+    react_entry: CorpusEntry, oos_entry: CorpusEntry
+) -> None:
+    # Default (isolate_entries=True) resets memory once per entry so each
+    # labelled probe is answered cold.
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(text="Use useState()."),
+            oos_entry.question: _FakeAgentResponse(text="I don't have docs for that."),
+        }
+    )
+    await run_corpus(agent=agent, entries=[react_entry, oos_entry], judge=None)
+    assert agent.reset_calls == 2
+
+
+async def test_run_corpus_warm_memory_skips_reset(
+    react_entry: CorpusEntry, oos_entry: CorpusEntry
+) -> None:
+    # Opt-in warm mode leaves memory intact across entries (cross-turn test).
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(text="Use useState()."),
+            oos_entry.question: _FakeAgentResponse(text="I don't have docs for that."),
+        }
+    )
+    await run_corpus(
+        agent=agent, entries=[react_entry, oos_entry], judge=None, isolate_entries=False
+    )
+    assert agent.reset_calls == 0
 
 
 async def test_run_corpus_captures_runner_errors(react_entry: CorpusEntry) -> None:

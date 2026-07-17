@@ -99,17 +99,32 @@ async def run_corpus(
     agent: AgentLike,
     entries: list[CorpusEntry],
     judge: Judge | None,
+    isolate_entries: bool = True,
 ) -> list[RunResult]:
     """Sequentially replay every entry through the agent.
 
-    Sequential rather than parallel because: (a) we want stable order for
-    deterministic JSON output; (b) Mneme writes from one turn could affect
-    retrieval in the next - which is what we WANT under test, not what we'd
-    want to scramble with concurrent turns.
+    Sequential rather than parallel so we get stable, deterministic JSON
+    output.
+
+    ``isolate_entries`` (default ``True``) resets the agent's memory before
+    each entry so every labelled probe is answered COLD. Each corpus entry is
+    an independent, labelled question; the single persistent agent records
+    each Q/A into Mneme and surfaces prior Q/As in the next prompt, so without
+    a reset the metrics become order-dependent and an earlier entry's answer
+    (e.g. one containing ``useState``) can leak into a later, similar entry —
+    inflating accuracy/version-correctness in a way a genuinely cold query
+    would not. Pass ``isolate_entries=False`` only to deliberately exercise
+    cross-turn memory (a different, multi-turn kind of test).
+
+    The reset is duck-typed: agents exposing ``reset_memory()`` get called;
+    memoryless fakes are left alone.
     """
     results: list[RunResult] = []
+    reset = getattr(agent, "reset_memory", None)
     for i, entry in enumerate(entries, start=1):
         logger.info("eval %d/%d: %s", i, len(entries), entry.id)
+        if isolate_entries and callable(reset):
+            reset()
         try:
             result = await run_one(agent=agent, entry=entry, judge=judge)
         except Exception as exc:

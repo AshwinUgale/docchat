@@ -186,6 +186,30 @@ async def test_agent_records_qa_to_workspace_memory() -> None:
     assert memory.manager.episodic.count() == 1
 
 
+async def test_agent_reset_memory_clears_recorded_qa() -> None:
+    openai = _fake_openai_scripted(
+        tool_call_args={
+            "name": "search_docs",
+            "arguments": {"library": "react", "version": "18.2.0", "query": "useState"},
+        },
+        final_text="useState returns a stateful value and a setter.",
+    )
+    memory = _build_memory()
+    agent = Agent(
+        openai=openai,
+        qdrant=_fake_qdrant_with_one_hit(),
+        memory=memory,
+        self_critique=False,
+        topic_filter=False,
+    )
+
+    await agent.answer("how do I use useState?")
+    assert memory.manager.episodic.count() == 1
+    # The eval harness calls this between corpus entries to answer each cold.
+    agent.reset_memory()
+    assert memory.manager.episodic.count() == 0
+
+
 # ---------------------------------------------------------------------------
 # Refusal path - canonical phrase makes it through unchanged
 # ---------------------------------------------------------------------------

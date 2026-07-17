@@ -95,6 +95,17 @@ def _parser() -> argparse.ArgumentParser:
             "(default is on)."
         ),
     )
+    p.add_argument(
+        "--warm-memory",
+        action="store_true",
+        help=(
+            "Keep Mneme memory across corpus entries instead of resetting it "
+            "between each (the default). Warm mode tests cross-turn memory but "
+            "makes per-entry metrics order-dependent and can leak an earlier "
+            "entry's answer into a later one; leave off for the headline "
+            "accuracy/version/refusal numbers."
+        ),
+    )
     return p
 
 
@@ -121,7 +132,9 @@ async def _run(args: argparse.Namespace) -> RunSummary:
     )
     judge = None if args.no_judge else LLMJudge(openai=openai)
 
-    results = await run_corpus(agent=agent, entries=entries, judge=judge)
+    results = await run_corpus(
+        agent=agent, entries=entries, judge=judge, isolate_entries=not args.warm_memory
+    )
     metrics = compute_metrics(results)
     return RunSummary(
         corpus_name=corpus.name,
@@ -131,6 +144,7 @@ async def _run(args: argparse.Namespace) -> RunSummary:
             "judge_enabled": not args.no_judge,
             "self_critique": not args.no_self_critique,
             "topic_filter": not args.no_topic_filter,
+            "memory_isolation": not args.warm_memory,
             "qdrant_url": args.qdrant_url,
         },
         metrics=metrics,

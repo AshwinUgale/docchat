@@ -218,6 +218,16 @@ class Agent:
         # so v0.7+ can grow to N>3 tools without restructuring.
         self._picker = ToolPicker(FunctionSchemaSource(tool_schemas()))
 
+    def reset_memory(self) -> None:
+        """Clear this agent's workspace memory.
+
+        The eval harness calls this between corpus entries (when running in
+        isolated mode) so each labelled probe is answered cold, without prior
+        entries' Q/As leaking into the prompt. Production never calls it — a
+        real workspace session wants memory to accumulate across turns.
+        """
+        self._memory.clear()
+
     async def answer(
         self,
         query: str,
