@@ -210,6 +210,28 @@ async def test_agent_reset_memory_clears_recorded_qa() -> None:
     assert memory.manager.episodic.count() == 0
 
 
+def test_agent_forwards_floor_overrides_to_search_docs() -> None:
+    # The eval harness overrides retrieval floors so calibration / untuned-
+    # baseline runs don't require editing the production SearchDocsTool.
+    agent = Agent(
+        openai=MagicMock(),
+        qdrant=MagicMock(),
+        memory=_build_memory(),
+        score_floor=0.30,
+        floors_by_library={"fastapi": 0.12},
+    )
+    assert agent._search_docs._score_floor == 0.30
+    assert agent._search_docs._floor_for("fastapi") == 0.12
+    # Libraries without an override fall back to the (overridden) global floor.
+    assert agent._search_docs._floor_for("react") == 0.30
+
+
+def test_agent_default_floors_when_no_override() -> None:
+    # No override -> SearchDocsTool keeps its own shipped defaults.
+    agent = Agent(openai=MagicMock(), qdrant=MagicMock(), memory=_build_memory())
+    assert agent._search_docs._score_floor == 0.15  # tool default
+
+
 # ---------------------------------------------------------------------------
 # Refusal path - canonical phrase makes it through unchanged
 # ---------------------------------------------------------------------------

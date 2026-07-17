@@ -176,6 +176,8 @@ class Agent:
         max_iterations: int = 3,
         self_critique: bool = False,
         topic_filter: bool = True,
+        score_floor: float | None = None,
+        floors_by_library: dict[str, float] | None = None,
     ) -> None:
         self._openai = openai
         self._memory = memory
@@ -203,7 +205,16 @@ class Agent:
         # ``--no-topic-filter`` on the eval CLI.
         self._topic_filter = topic_filter
 
-        self._search_docs = SearchDocsTool(qdrant=qdrant, openai=openai)
+        # Retrieval score floors are decision thresholds. SearchDocsTool ships
+        # corpus-tuned defaults; the eval harness can override them here so a
+        # calibration run and an untuned-baseline run don't require editing the
+        # production tool. Only forward the args the caller actually set.
+        search_docs_kwargs: dict[str, Any] = {"qdrant": qdrant, "openai": openai}
+        if score_floor is not None:
+            search_docs_kwargs["score_floor"] = score_floor
+        if floors_by_library is not None:
+            search_docs_kwargs["floors_by_library"] = floors_by_library
+        self._search_docs = SearchDocsTool(**search_docs_kwargs)
         self._search_workspace = SearchWorkspaceCodeTool(workspace_path=workspace_path)
         self._find_changelog = FindInChangelogTool()
 

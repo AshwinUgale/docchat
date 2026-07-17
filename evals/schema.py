@@ -63,6 +63,14 @@ class CorpusEntry(BaseModel):
     Drives the ``refusal_rate`` metric. ``expected_answer`` for these can
     be a short "I don't have docs for..." sentinel."""
 
+    split: str | None = None
+    """Optional held-out split tag, e.g. ``"calibration"`` or ``"test"``.
+    ``None`` means the entry belongs to every split. Retrieval score floors
+    are decision thresholds that MUST be tuned on ``"calibration"`` and
+    reported on ``"test"`` - tuning and reporting on the same entries is
+    train-on-test. The runner filters on this via ``--split``; ``None``
+    entries always run so an untagged corpus keeps its current behaviour."""
+
     notes: str | None = None
     """Free-form authoring notes. Not used by the runner."""
 
