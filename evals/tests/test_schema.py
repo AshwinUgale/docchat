@@ -87,6 +87,7 @@ def test_run_metrics_serialises_round_trip() -> None:
         answer_accuracy=0.875,
         version_correctness=0.9375,
         refusal_rate=1.0,
+        overrefusal_rate=0.0625,
         mean_latency_ms=2400.0,
         p95_latency_ms=4100.0,
     )

@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         f"accuracy={m.answer_accuracy:.3f} "
         f"version={m.version_correctness:.3f} "
         f"refusal={m.refusal_rate:.3f} "
+        f"overrefusal={m.overrefusal_rate:.3f} "
         f"p95={m.p95_latency_ms:.0f}ms "
         f"-> {args.output}"
     )

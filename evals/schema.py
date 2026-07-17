@@ -108,6 +108,13 @@ class RunResult(BaseModel):
     refused: bool
     """Did the answer signal refusal (e.g. 'I don't have docs for...')?"""
 
+    out_of_scope: bool = False
+    """The corpus-level scope label for this entry, copied from
+    ``CorpusEntry.out_of_scope`` by the runner. This is the ground truth
+    ``compute_metrics`` splits on — NOT the agent's behaviour. Deriving scope
+    from behaviour (``refused``) is circular: it hides in-scope over-refusals
+    and lets out-of-scope hallucinations escape ``refusal_rate``."""
+
     latency_ms: float
 
 
@@ -121,7 +128,8 @@ class RunMetrics(BaseModel):
     answer_accuracy: float
     """Fraction of in-scope entries the judge marked correct. ``None`` when
     the judge was skipped is represented as 0 here for JSON simplicity;
-    inspect per-entry ``judge`` to disambiguate."""
+    inspect per-entry ``judge`` to disambiguate. In-scope entries the agent
+    refused are judged incorrect, so over-refusal correctly lowers this."""
 
     version_correctness: float
     """Fraction of in-scope entries where ``version_correct`` is True."""
@@ -129,7 +137,14 @@ class RunMetrics(BaseModel):
     refusal_rate: float
     """Fraction of out-of-scope entries where ``refused`` is True. 1.0 is
     the goal - agent should refuse out-of-scope questions, not invent
-    answers."""
+    answers. An out-of-scope entry the agent *answered* (hallucinated)
+    lowers this, as it should."""
+
+    overrefusal_rate: float
+    """Fraction of in-scope entries the agent wrongly refused. 0.0 is the
+    goal. The companion to ``refusal_rate``: it surfaces the failure the
+    old behaviour-derived scope split silently hid - refusing questions
+    the docs *do* answer."""
 
     mean_latency_ms: float
     p95_latency_ms: float

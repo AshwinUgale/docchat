@@ -89,6 +89,7 @@ async def run_one(
         judge=verdict,
         version_correct=version_correct,
         refused=refused,
+        out_of_scope=entry.out_of_scope,
         latency_ms=latency_ms,
     )
 
@@ -122,6 +123,7 @@ async def run_corpus(
                 judge=None,
                 version_correct=False,
                 refused=False,
+                out_of_scope=entry.out_of_scope,
                 latency_ms=0.0,
             )
         results.append(result)
