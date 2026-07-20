@@ -162,6 +162,7 @@ async def test_agent_answers_query_with_citations() -> None:
     assert response.tool_used == "search_docs"
     assert response.iterations == 2  # 1 tool call + 1 final
     assert len(response.citations) == 1
+    assert response.refused is False  # a real answer is not a refusal
 
 
 async def test_agent_records_qa_to_workspace_memory() -> None:
@@ -252,6 +253,8 @@ async def test_agent_emits_canonical_refusal_phrase() -> None:
     response = await agent.answer("how do I configure CORS in Flask?")
     # The eval's is_refusal heuristic relies on this exact substring.
     assert "i don't have" in response.text.lower()
+    # And the agent reports it structurally so the eval doesn't have to sniff.
+    assert response.refused is True
 
 
 # ---------------------------------------------------------------------------

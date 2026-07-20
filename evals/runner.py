@@ -69,7 +69,13 @@ async def run_one(
         expected_apis=entry.expected_apis,
         forbidden_apis=entry.forbidden_apis,
     )
-    refused = is_refusal(answer_text)
+    # Prefer the agent's authoritative ``refused`` flag when it exposes one
+    # (the real Agent does); fall back to the substring heuristic for
+    # duck-typed agents/fakes that don't. The structured flag avoids
+    # miscounting a legit answer that merely says "not covered in 18.2, but
+    # ..." as a refusal.
+    refused_attr = getattr(response, "refused", None)
+    refused = refused_attr if isinstance(refused_attr, bool) else is_refusal(answer_text)
 
     verdict: JudgeVerdict | None = None
     if judge is not None and not entry.out_of_scope:

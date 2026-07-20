@@ -26,6 +26,9 @@ class _FakeAgentResponse:
     text: str
     tool_used: str = "search_docs"
     citations: list[_FakeCitation] = field(default_factory=list)
+    # None -> no structured flag (runner falls back to the is_refusal heuristic,
+    # mirroring a duck-typed agent); a bool -> the authoritative flag.
+    refused: bool | None = None
 
 
 class _FakeAgent:
@@ -130,6 +133,30 @@ async def test_run_one_handles_no_judge(react_entry: CorpusEntry) -> None:
     result = await run_one(agent=agent, entry=react_entry, judge=None)
     assert result.judge is None
     assert result.version_correct is True
+
+
+async def test_run_one_prefers_structured_refused_flag(react_entry: CorpusEntry) -> None:
+    # Text that trips the substring heuristic ("not covered") but is a real,
+    # partial answer -> the agent's structured refused=False must win.
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(
+                text="useState covers local state; effects are not covered here.",
+                refused=False,
+            )
+        }
+    )
+    result = await run_one(agent=agent, entry=react_entry, judge=None)
+    assert result.refused is False  # structured flag beats the heuristic
+
+
+async def test_run_one_falls_back_to_heuristic_without_flag(react_entry: CorpusEntry) -> None:
+    # No structured flag (refused=None) -> runner uses is_refusal on the text.
+    agent = _FakeAgent(
+        {react_entry.question: _FakeAgentResponse(text="I don't have docs for that.")}
+    )
+    result = await run_one(agent=agent, entry=react_entry, judge=None)
+    assert result.refused is True
 
 
 # ---------------------------------------------------------------------------
