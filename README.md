@@ -20,16 +20,20 @@ DocChat fixes this. It parses your project's lockfiles, indexes the docs for the
 
 ## How it does
 
-| Metric | v0.9 baseline | Corpus |
+Measured on the 48-pair corpus (React 18.2, FastAPI 0.95 **and** 0.100 side-by-side, Vue 3.4), `gpt-4o-mini`, scope split on the ground-truth `out_of_scope` label (40 in-scope / 8 out-of-scope):
+
+| Metric | v1.0 (corrected metric) | Notes |
 |---|---|---|
-| **In-scope answered** | **35 of 40** | 88% — was 59% at v0.8 |
-| **Version correctness** (substring, over answered entries) | **0.943** | 40-pair, 3 libraries |
-| **Answer accuracy** (LLM-judged, over answered entries) | **0.781** | judged-in-scope only |
-| **Refusal rate** (over entries classified out-of-scope) | **1.000** | retrieval-gated + canonical phrase |
-| **p95 latency** | **~13 s** | gpt-4o-mini, multi-iteration ReAct (max 3) |
+| **Answer accuracy** (LLM-judged, over 40 in-scope) | **0.675** | 27 / 40 |
+| **Version correctness** (over 40 in-scope) | **0.850** | expected API present, wrong-version API absent |
+| **Refusal rate** (over 8 out-of-scope) | **0.875** | 7 / 8 correctly refused |
+| **Over-refusal rate** (in-scope wrongly refused) | **0.025** | 1 / 40 |
+| **p95 latency** | **~15 s** | multi-iteration ReAct (max 3) |
 | **Cost / turn** | **~$0.0003** | 1–3 streamed OpenAI calls per query |
 
-Recall nearly doubled at v0.9 (19 → 35 answered) while `version_correctness` returned to the v0.7 best of 0.943. v0.9's structural changes:
+> **The eval caught a bug in itself.** Earlier releases reported `refusal_rate = 1.000` — but the metric derived in/out-of-scope from the agent's *behaviour* (did it refuse?) rather than the corpus label. That was circular: an out-of-scope question the agent *answered* got silently reclassified as in-scope and never counted against the refusal metric, and an in-scope question it *over-refused* was counted as a success. Splitting on the ground-truth `out_of_scope` label dropped refusal to an honest **0.875** and immediately surfaced the failure the old number was hiding — a cross-framework question ("call my FastAPI backend from a React `useEffect`") the agent answered instead of refusing. `over-refusal rate` is the companion signal the old split also hid. The corrected harness (label-based scope + per-entry memory isolation) lives in [`evals/`](./evals/).
+
+Historical iteration is below; the numbers in that table are as-reported at each version, using the then-current (pre-fix) metric. v0.9's structural changes:
 
 - **`pinned_libraries` plumbing through `Agent.answer()` + eval runner.** v0.9's per-query score logging surfaced a bug that had been hidden since v0.6: the LLM was inferring versions from question text and hitting unindexed collections (`fastapi_0_95_2` instead of `fastapi_0_95_0`, `vue_3_0_0` instead of `vue_3_4_0`). The runner now passes the corpus entry's library@version as a lockfile pin; the agent's system prompt surfaces it and `_dispatch` overrides any wrong version the LLM guesses. 16 previously-refused queries now answer.
 - **Vue floor recalibrated from 0.10 → 0.05.** With the routing fix in place, Vue queries actually hit `vue_3_4_0` and score 0.40–0.55 (well above any reasonable floor); the original 7/8 over-refusal was 100% the routing bug, not the floor.
@@ -44,14 +48,6 @@ The trade-off: accuracy ticked down from v0.8's 0.889 → 0.781 because the answ
 
 Streaming (token-by-token via OpenAI `stream=True`) masks the multi-iteration overhead so the first tokens land in <1s even when the full answer takes 12s.
 
-Reproduce with one command:
-
-```powershell
-docker compose up -d qdrant
-$env:PYTHONPATH = "$PWD;$PWD\sidecar\src"
-uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --output ..\out\eval.json
-```
-
 **Engineering iteration the eval drove:**
 
 | Version | accuracy | version | in_scope | what changed |
@@ -63,9 +59,10 @@ uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --outpu
 | v0.7 | 0.882 | 0.944 | 18 / 24 | per-library floors + version anchoring |
 | v0.8 | 0.889 | 0.895 | 19 / 32 | chunk metadata + Vue 3.4 (3rd library) + critique reverted |
 | v0.9 | 0.781 | 0.943 | 35 / 40 | pinned_libraries fix (routing bug) + api_name filter + score logging |
-| **v1.0** | **0.675** | **0.854** | **41 / 48** | git-ref resolution + FastAPI 0.95 & 0.100 + Python lockfiles + topic classifier |
+| v1.0 | 0.675 | 0.854 | 41 / 48 | git-ref resolution + FastAPI 0.95 & 0.100 + Python lockfiles + topic classifier |
+| **v1.1** (unreleased) | **0.675** | **0.850** | **40 / 8** | **metric fix**: scope split on the corpus label (not agent behaviour) + memory isolation → honest `refusal_rate` 1.000 → **0.875**, new `over-refusal 0.025` |
 
-The portfolio narrative is the iteration, not just the final number. Every regression got measured, named, and patched — including a v0.6.1 prompt-softening attempt that was tried and reverted with eval data ([see CHANGELOG](./CHANGELOG.md)).
+The portfolio narrative is the iteration, not just the final number. Every regression got measured, named, and patched — including a v0.6.1 prompt-softening attempt reverted with eval data, and the v1.1 discovery that the harness itself was scoring refusals wrong ([see CHANGELOG](./CHANGELOG.md)). Rows through v1.0 used the pre-fix (behaviour-derived) scope split; `in_scope` there counts answered entries, whereas v1.1's `40 / 8` is the corpus's true in-scope / out-of-scope split.
 
 Reproduce with one command:
 
@@ -75,7 +72,7 @@ $env:PYTHONPATH = "$PWD;$PWD\sidecar\src"
 uv --directory sidecar run python -m evals --corpus ..\evals\corpus.json --output ..\out\eval.json
 ```
 
-The corpus + runner + LLM judge live in [`evals/`](./evals/).
+The corpus + runner + LLM judge live in [`evals/`](./evals/) — including `--split` (held-out calibration/test) and `--score-floor` / `--floor` overrides so retrieval thresholds can be calibrated off the reported set.
 
 ---
 
@@ -121,7 +118,7 @@ Ask something out of scope — *"how do I configure CORS in Flask?"* — and Doc
                       │  Extension  │  TypeScript
                       │  (chat UI)  │  — webview, file watching, citation jumps
                       └──────┬──────┘
-                             │ WebSocket on localhost:<random>
+                             │ WebSocket on 127.0.0.1:<random>, per-spawn token
                              │ (spawned on activate, killed on deactivate)
                       ┌──────┴──────┐
                       │   Sidecar   │  Python
