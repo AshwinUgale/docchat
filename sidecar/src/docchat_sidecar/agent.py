@@ -413,9 +413,7 @@ class Agent:
         """
         pins_clause = ""
         if pinned_libraries:
-            pin_summary = ", ".join(
-                f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items())
-            )
+            pin_summary = ", ".join(f"{lib}@{ver}" for lib, ver in sorted(pinned_libraries.items()))
             pins_clause = (
                 f"\n\nThe user's project pins these libraries: {pin_summary}. "
                 "If the question is plausibly about how to do something in "
@@ -525,8 +523,7 @@ class Agent:
         the "Sources:" block is appended.
         """
         refused_flag = (
-            refused if refused is not None
-            else _CANONICAL_REFUSAL.lower() in answer_text.lower()
+            refused if refused is not None else _CANONICAL_REFUSAL.lower() in answer_text.lower()
         )
         if citations:
             citation_block = " ".join(c.render() for c in _dedupe_citations(citations))

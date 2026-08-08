@@ -28,9 +28,11 @@ def test_rejects_browser_origin(monkeypatch: pytest.MonkeyPatch, origin: str) ->
     # A malicious web page connects with an http(s) Origin -> rejected even
     # when no token is configured.
     monkeypatch.delenv("DOCCHAT_WS_TOKEN", raising=False)
-    with pytest.raises(WebSocketDisconnect):
-        with _client().websocket_connect("/chat", headers={"origin": origin}) as ws:
-            _ping_pong(ws)
+    with (
+        pytest.raises(WebSocketDisconnect),
+        _client().websocket_connect("/chat", headers={"origin": origin}) as ws,
+    ):
+        _ping_pong(ws)
 
 
 def test_allows_when_no_token_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,16 +45,20 @@ def test_allows_when_no_token_configured(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_missing_token_rejected_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCCHAT_WS_TOKEN", "secret-nonce")
-    with pytest.raises(WebSocketDisconnect):
-        with _client().websocket_connect("/chat") as ws:
-            _ping_pong(ws)
+    with (
+        pytest.raises(WebSocketDisconnect),
+        _client().websocket_connect("/chat") as ws,
+    ):
+        _ping_pong(ws)
 
 
 def test_wrong_token_rejected_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCCHAT_WS_TOKEN", "secret-nonce")
-    with pytest.raises(WebSocketDisconnect):
-        with _client().websocket_connect("/chat?token=wrong") as ws:
-            _ping_pong(ws)
+    with (
+        pytest.raises(WebSocketDisconnect),
+        _client().websocket_connect("/chat?token=wrong") as ws,
+    ):
+        _ping_pong(ws)
 
 
 def test_correct_token_allowed(monkeypatch: pytest.MonkeyPatch) -> None:

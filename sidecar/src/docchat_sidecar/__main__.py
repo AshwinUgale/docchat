@@ -52,7 +52,7 @@ if not os.environ.get("OPENAI_API_KEY"):
     )
     print(
         "OPENAI_API_KEY is not set. DocChat uses OpenAI's embeddings API "
-        "for retrieval. Run \"DocChat: Set OpenAI API Key\" from the "
+        'for retrieval. Run "DocChat: Set OpenAI API Key" from the '
         "command palette to store one in VS Code SecretStorage.",
         file=sys.stderr,
         flush=True,
