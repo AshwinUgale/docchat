@@ -58,6 +58,34 @@ logging.basicConfig(
 )
 
 
+def _parse_floor_overrides(items: list[str] | None) -> dict[str, float]:
+    """Parse ``--floor lib=value`` pairs into a ``{library: floor}`` dict.
+
+    Raises ``ValueError`` on a malformed pair so a typo fails loudly rather
+    than silently running with the tool's default floors.
+    """
+    floors: dict[str, float] = {}
+    for item in items or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"--floor expects 'library=value', got {item!r}")
+        floors[key.strip().lower()] = float(value)
+    return floors
+
+
+def _select_entries(entries: list, split: str) -> list:
+    """Filter corpus entries by split tag.
+
+    ``split == "all"`` runs everything. Otherwise keep entries whose ``split``
+    matches, plus untagged (``split is None``) entries, which belong to every
+    split - so a corpus with no split tags behaves identically under any
+    ``--split`` value.
+    """
+    if split == "all":
+        return list(entries)
+    return [e for e in entries if e.split is None or e.split == split]
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m evals")
     p.add_argument("--corpus", type=Path, required=True, help="Path to a corpus JSON file.")
@@ -95,6 +123,47 @@ def _parser() -> argparse.ArgumentParser:
             "(default is on)."
         ),
     )
+    p.add_argument(
+        "--warm-memory",
+        action="store_true",
+        help=(
+            "Keep Mneme memory across corpus entries instead of resetting it "
+            "between each (the default). Warm mode tests cross-turn memory but "
+            "makes per-entry metrics order-dependent and can leak an earlier "
+            "entry's answer into a later one; leave off for the headline "
+            "accuracy/version/refusal numbers."
+        ),
+    )
+    p.add_argument(
+        "--split",
+        default="all",
+        help=(
+            "Run only entries whose 'split' tag matches (untagged entries "
+            "always run). Score floors are decision thresholds and must be "
+            "calibrated on --split calibration, then reported on --split test "
+            "- tuning and reporting on the same entries is train-on-test. "
+            "Default 'all'."
+        ),
+    )
+    p.add_argument(
+        "--score-floor",
+        type=float,
+        default=None,
+        help=(
+            "Override SearchDocsTool's default cosine floor for every library. "
+            "Use to run an untuned baseline (e.g. --score-floor 0.0) or a "
+            "calibration sweep without editing the sidecar defaults."
+        ),
+    )
+    p.add_argument(
+        "--floor",
+        action="append",
+        metavar="LIB=VALUE",
+        help=(
+            "Per-library floor override, e.g. --floor fastapi=0.12. Repeatable. "
+            "Overrides --score-floor for that library."
+        ),
+    )
     return p
 
 
@@ -107,7 +176,10 @@ async def _run(args: argparse.Namespace) -> RunSummary:
 
     corpus_data = json.loads(args.corpus.read_text(encoding="utf-8"))
     corpus = TypeAdapter(Corpus).validate_python(corpus_data)
-    entries = corpus.entries[: args.limit] if args.limit else corpus.entries
+    entries = _select_entries(corpus.entries, args.split)
+    entries = entries[: args.limit] if args.limit else entries
+
+    floor_overrides = _parse_floor_overrides(args.floor)
 
     openai = AsyncOpenAI()
     qdrant = AsyncQdrantClient(url=args.qdrant_url)
@@ -118,10 +190,14 @@ async def _run(args: argparse.Namespace) -> RunSummary:
         memory=memory,
         self_critique=not args.no_self_critique,
         topic_filter=not args.no_topic_filter,
+        score_floor=args.score_floor,
+        floors_by_library=floor_overrides or None,
     )
     judge = None if args.no_judge else LLMJudge(openai=openai)
 
-    results = await run_corpus(agent=agent, entries=entries, judge=judge)
+    results = await run_corpus(
+        agent=agent, entries=entries, judge=judge, isolate_entries=not args.warm_memory
+    )
     metrics = compute_metrics(results)
     return RunSummary(
         corpus_name=corpus.name,
@@ -131,6 +207,12 @@ async def _run(args: argparse.Namespace) -> RunSummary:
             "judge_enabled": not args.no_judge,
             "self_critique": not args.no_self_critique,
             "topic_filter": not args.no_topic_filter,
+            "memory_isolation": not args.warm_memory,
+            "split": args.split,
+            "score_floor_override": (
+                "default" if args.score_floor is None else str(args.score_floor)
+            ),
+            "floor_overrides": json.dumps(floor_overrides) if floor_overrides else "none",
             "qdrant_url": args.qdrant_url,
         },
         metrics=metrics,
@@ -153,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         f"accuracy={m.answer_accuracy:.3f} "
         f"version={m.version_correctness:.3f} "
         f"refusal={m.refusal_rate:.3f} "
+        f"overrefusal={m.overrefusal_rate:.3f} "
         f"p95={m.p95_latency_ms:.0f}ms "
         f"-> {args.output}"
     )

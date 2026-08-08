@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hmac
 import logging
 import os
 import socket
@@ -92,6 +93,45 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
 
+async def _reject_unauthorized(ws: WebSocket) -> bool:
+    """Reject an unauthorized WebSocket handshake before ``accept()``.
+
+    Two gates. Both close the socket (a close before accept is a 403
+    handshake rejection) and return ``True`` when the connection is denied:
+
+    * **Origin** — a malicious web page in the user's browser connects with an
+      ``http(s)://`` Origin. The VS Code webview uses the ``vscode-webview://``
+      scheme and native clients send no Origin, so neither is affected. Reject
+      any http(s) Origin outright.
+    * **Token** — when the extension set ``DOCCHAT_WS_TOKEN`` (a per-spawn nonce
+      it also hands the webview via postMessage), require it as the ``?token=``
+      query param. The nonce lives only in this process's env and that one
+      webview, so no other local client can present it. Constant-time compared.
+      Unset (standalone / dev / the eval harness, which bypasses the WS
+      entirely) means "no token required" — logged once so it's visible.
+    """
+    origin = ws.headers.get("origin", "")
+    if origin.startswith(("http://", "https://")):
+        logger.warning("rejecting WebSocket from browser origin %r", origin)
+        await ws.close(code=1008)  # policy violation
+        return True
+
+    expected = os.environ.get("DOCCHAT_WS_TOKEN") or None
+    if expected is None:
+        logger.warning(
+            "DOCCHAT_WS_TOKEN not set — accepting WebSocket connections without a "
+            "token (fine for standalone/dev; the extension always sets one)."
+        )
+        return False
+
+    presented = ws.query_params.get("token", "")
+    if not presented or not hmac.compare_digest(presented, expected):
+        logger.warning("rejecting WebSocket: missing or invalid token")
+        await ws.close(code=1008)
+        return True
+    return False
+
+
 @app.websocket("/chat")
 async def chat(ws: WebSocket) -> None:
     """Typed message dispatcher.
@@ -100,6 +140,8 @@ async def chat(ws: WebSocket) -> None:
     Bad frames produce a single error frame; the connection stays open so
     the panel doesn't have to reconnect on transient parse failures.
     """
+    if await _reject_unauthorized(ws):
+        return
     await ws.accept()
     try:
         while True:

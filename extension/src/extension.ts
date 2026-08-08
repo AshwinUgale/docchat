@@ -12,6 +12,7 @@
  * surfaces a one-click "Set Key" recovery action.
  */
 
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -159,6 +160,15 @@ async function openChatPanel(context: vscode.ExtensionContext): Promise<void> {
     envOverrides.OPENAI_API_KEY = storedKey;
   }
 
+  // Per-spawn WebSocket token. The sidecar binds to 127.0.0.1 but its /chat
+  // socket is otherwise reachable by any local process (or a malicious web
+  // page) that finds the port. We hand this nonce to the sidecar via env AND
+  // to the webview below; the sidecar rejects any /chat handshake that
+  // doesn't present it. A fresh token per spawn means a leaked one dies with
+  // the panel.
+  const wsToken = randomBytes(32).toString("hex");
+  envOverrides.DOCCHAT_WS_TOKEN = wsToken;
+
   activeSidecar = await spawnSidecar(context.extensionPath, outputChannel, envOverrides);
   const port = activeSidecar.port;
 
@@ -178,7 +188,7 @@ async function openChatPanel(context: vscode.ExtensionContext): Promise<void> {
 
   panel.webview.html = loadWebviewHtml(context.extensionPath);
 
-  void panel.webview.postMessage({ type: "sidecarPort", port });
+  void panel.webview.postMessage({ type: "sidecarPort", port, token: wsToken });
 
   panel.webview.onDidReceiveMessage((msg: unknown) => {
     if (!msg || typeof msg !== "object") return;

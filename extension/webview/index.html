@@ -391,9 +391,12 @@
       }
     }
 
-    function connect(port) {
+    function connect(port, token) {
       append("system", `Opening WebSocket on ws://localhost:${port}/chat`);
-      const socket = new WebSocket(`ws://localhost:${port}/chat`);
+      // The sidecar requires the per-spawn token the extension generated and
+      // handed us via postMessage; without it the handshake is rejected.
+      const query = token ? `?token=${encodeURIComponent(token)}` : "";
+      const socket = new WebSocket(`ws://localhost:${port}/chat${query}`);
       socket.addEventListener("open", () => {
         setStatus("connected", "ok");
         append("system", "Connected. Type a message or click 'Index React 18.2' to populate the docs collection.");
@@ -428,7 +431,7 @@
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (msg && msg.type === "sidecarPort" && typeof msg.port === "number") {
-        connect(msg.port);
+        connect(msg.port, typeof msg.token === "string" ? msg.token : undefined);
       }
     });
 

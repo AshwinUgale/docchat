@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- **Eval scope split was derived from agent behaviour, not the corpus label.** `compute_metrics` inferred in/out-of-scope from `refused and not judge.correct`, which was circular: an in-scope question the agent wrongly refused was reclassified as out-of-scope (dropped from accuracy, counted as a *successful* refusal), and an out-of-scope question the agent answered escaped `refusal_rate` entirely. `RunResult` now carries `out_of_scope` from `CorpusEntry` and the metric splits on that label. On the 48-pair corpus this dropped the reported `refusal_rate` from a spurious **1.000 to 0.875** and surfaced a real cross-framework hallucination (`fastapi_0_95_oos_react`) the old metric hid.
+- **Cross-entry memory contamination in the eval harness.** The runner replayed one persistent agent over the whole corpus, and each answer recorded the Q/A into Mneme and surfaced prior Q/As in the next prompt — so entry N saw entries 1..N-1's answers (order-dependent, leak-prone). `run_corpus` now resets agent memory before each entry by default (`Agent.reset_memory()` / `WorkspaceMemory.clear()`); `--warm-memory` opts back into cross-turn behaviour.
+
+### Added
+- **`overrefusal_rate` metric** — fraction of in-scope entries the agent wrongly refused (the companion the old behaviour-derived split hid).
+- **Calibratable retrieval floors.** `CorpusEntry.split` + `--split` (run a held-out calibration/test subset) and `--score-floor` / `--floor lib=value` overrides forwarded to `SearchDocsTool`, so decision thresholds can be tuned off the reported set instead of on it. An untuned baseline (`--score-floor 0.0`) scored equal-or-better than the shipped floors on the current corpus.
+- **`scripts/index_corpus.py`** — headless indexer that populates every collection the corpus needs, so the eval no longer requires the VS Code extension to index.
+
+### Security
+- **Authenticated the `/chat` WebSocket handshake.** The sidecar binds to `127.0.0.1` but previously accepted any connection, so any local process or malicious web page that found the random port could drive the agent — spending the user's OpenAI key and, via `search_workspace_code`, exfiltrating workspace file contents. The handshake is now rejected before `accept()` on (a) any `http(s)://` Origin and (b) a per-spawn nonce: the extension generates `randomBytes(32)`, passes it to the sidecar via `DOCCHAT_WS_TOKEN` and to the webview via `postMessage`, and the webview presents it as `?token=` (constant-time compared). Unset (standalone/dev/eval) leaves connections open with a warning.
+
 ## [1.0.2] - 2026-06-08
 
 ### Fixed

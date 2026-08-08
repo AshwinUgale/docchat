@@ -98,6 +98,21 @@ class WorkspaceMemory:
         }
         return self.manager.episodic.add(content, metadata=metadata)
 
+    def clear(self) -> None:
+        """Wipe every memory this workspace holds, across all tiers.
+
+        Used to isolate eval entries from one another: the eval harness runs
+        one persistent agent over a labelled corpus, and without a reset each
+        entry would see prior entries' recorded Q/As in its prompt — an
+        order-dependent confound that can leak an earlier answer's API names
+        into a later, similar entry. Best-effort; a backend hiccup mustn't
+        abort the run.
+        """
+        try:
+            self.manager.clear_all()
+        except Exception as exc:  # pragma: no cover - backend failures shouldn't kill the run
+            logger.warning("Mneme clear failed: %s", exc)
+
     def retrieve_relevant(self, query: str, *, k: int = 3) -> list[str]:
         """Return up to ``k`` past Q/A snippets relevant to the current query.
 

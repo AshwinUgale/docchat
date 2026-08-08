@@ -76,25 +76,28 @@ def _percentile_ms(latencies: list[float], pct: float) -> float:
 def compute_metrics(results: list[RunResult]) -> RunMetrics:
     """Aggregate one run's per-entry results into a RunMetrics row.
 
-    Splits in-scope vs out-of-scope because the metrics that matter differ:
-      * in-scope drives ``answer_accuracy`` and ``version_correctness``.
+    Splits in-scope vs out-of-scope on the **corpus label** (``RunResult.
+    out_of_scope``, copied from ``CorpusEntry.out_of_scope`` by the runner),
+    because the metrics that matter differ:
+      * in-scope drives ``answer_accuracy``, ``version_correctness``, and
+        ``overrefusal_rate``.
       * out-of-scope drives ``refusal_rate`` (1.0 is the goal).
+
+    Scope MUST come from the label, not the agent's behaviour. The earlier
+    behaviour-derived split (``refused and not judge.correct -> out_of_scope``)
+    was circular: an in-scope question the agent wrongly refused got
+    reclassified as out-of-scope, silently dropped from the accuracy
+    denominator AND counted as a *successful* refusal - so the agent could
+    never be penalised for over-refusing, and an out-of-scope hallucination
+    (answered, not refused) escaped ``refusal_rate`` entirely.
     """
-    out_of_scope_ids: set[str] = set()
-    for r in results:
-        # An entry is out-of-scope if we have no expected_apis AND no
-        # judge verdict AND the runner flagged it - but the runner-side
-        # is_refusal heuristic alone is the source of truth here. We can't
-        # tell apart from RunResult, so we use the convention: entries
-        # whose judge=None AND refused=True are treated as out-of-scope
-        # for the rate calc. The corpus-level out_of_scope flag is what
-        # drives this; runner sets ``refused`` accordingly.
-        if r.refused and (r.judge is None or not r.judge.correct):
-            out_of_scope_ids.add(r.entry_id)
-    in_scope = [r for r in results if r.entry_id not in out_of_scope_ids]
-    out_of_scope = [r for r in results if r.entry_id in out_of_scope_ids]
+    in_scope = [r for r in results if not r.out_of_scope]
+    out_of_scope = [r for r in results if r.out_of_scope]
 
     # Answer accuracy - only over in-scope entries that had a judge verdict.
+    # An in-scope entry the agent refused is judged incorrect (the judge fails
+    # a refusal when a reference answer exists), so over-refusal correctly
+    # lowers this number instead of vanishing from the denominator.
     judged_in_scope = [r for r in in_scope if r.judge is not None]
     if judged_in_scope:
         answer_accuracy = sum(
@@ -109,8 +112,16 @@ def compute_metrics(results: list[RunResult]) -> RunMetrics:
         sum(1 for r in in_scope if r.version_correct) / len(in_scope) if in_scope else 0.0
     )
 
+    # Refusal rate - fraction of out-of-scope entries the agent refused.
+    # An out-of-scope entry the agent *answered* lowers this, as it should.
     refusal_rate = (
         sum(1 for r in out_of_scope if r.refused) / len(out_of_scope) if out_of_scope else 0.0
+    )
+
+    # Over-refusal rate - fraction of in-scope entries the agent wrongly
+    # refused. The companion the old split hid; 0.0 is the goal.
+    overrefusal_rate = (
+        sum(1 for r in in_scope if r.refused) / len(in_scope) if in_scope else 0.0
     )
 
     latencies = [r.latency_ms for r in results]
@@ -124,6 +135,7 @@ def compute_metrics(results: list[RunResult]) -> RunMetrics:
         answer_accuracy=answer_accuracy,
         version_correctness=version_correctness,
         refusal_rate=refusal_rate,
+        overrefusal_rate=overrefusal_rate,
         mean_latency_ms=mean_latency,
         p95_latency_ms=p95_latency,
     )

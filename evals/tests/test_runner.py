@@ -26,13 +26,21 @@ class _FakeAgentResponse:
     text: str
     tool_used: str = "search_docs"
     citations: list[_FakeCitation] = field(default_factory=list)
+    # None -> no structured flag (runner falls back to the is_refusal heuristic,
+    # mirroring a duck-typed agent); a bool -> the authoritative flag.
+    refused: bool | None = None
 
 
 class _FakeAgent:
-    """Configurable agent that returns canned answers per question."""
+    """Configurable agent that returns canned answers per question.
+
+    Exposes ``reset_memory`` and counts calls so the runner's memory-isolation
+    behaviour can be asserted without a real Mneme backend.
+    """
 
     def __init__(self, answers: dict[str, _FakeAgentResponse]) -> None:
         self._answers = answers
+        self.reset_calls = 0
 
     async def answer(
         self,
@@ -45,6 +53,9 @@ class _FakeAgent:
         # know about retrieval-routing internals.
         del pinned_libraries
         return self._answers.get(query, _FakeAgentResponse(text="(no answer)"))
+
+    def reset_memory(self) -> None:
+        self.reset_calls += 1
 
 
 @pytest.fixture
@@ -124,6 +135,30 @@ async def test_run_one_handles_no_judge(react_entry: CorpusEntry) -> None:
     assert result.version_correct is True
 
 
+async def test_run_one_prefers_structured_refused_flag(react_entry: CorpusEntry) -> None:
+    # Text that trips the substring heuristic ("not covered") but is a real,
+    # partial answer -> the agent's structured refused=False must win.
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(
+                text="useState covers local state; effects are not covered here.",
+                refused=False,
+            )
+        }
+    )
+    result = await run_one(agent=agent, entry=react_entry, judge=None)
+    assert result.refused is False  # structured flag beats the heuristic
+
+
+async def test_run_one_falls_back_to_heuristic_without_flag(react_entry: CorpusEntry) -> None:
+    # No structured flag (refused=None) -> runner uses is_refusal on the text.
+    agent = _FakeAgent(
+        {react_entry.question: _FakeAgentResponse(text="I don't have docs for that.")}
+    )
+    result = await run_one(agent=agent, entry=react_entry, judge=None)
+    assert result.refused is True
+
+
 # ---------------------------------------------------------------------------
 # run_corpus
 # ---------------------------------------------------------------------------
@@ -144,6 +179,37 @@ async def test_run_corpus_returns_one_result_per_entry(
     assert len(results) == 2
     assert results[0].entry_id == react_entry.id
     assert results[1].entry_id == oos_entry.id
+
+
+async def test_run_corpus_isolates_memory_by_default(
+    react_entry: CorpusEntry, oos_entry: CorpusEntry
+) -> None:
+    # Default (isolate_entries=True) resets memory once per entry so each
+    # labelled probe is answered cold.
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(text="Use useState()."),
+            oos_entry.question: _FakeAgentResponse(text="I don't have docs for that."),
+        }
+    )
+    await run_corpus(agent=agent, entries=[react_entry, oos_entry], judge=None)
+    assert agent.reset_calls == 2
+
+
+async def test_run_corpus_warm_memory_skips_reset(
+    react_entry: CorpusEntry, oos_entry: CorpusEntry
+) -> None:
+    # Opt-in warm mode leaves memory intact across entries (cross-turn test).
+    agent = _FakeAgent(
+        {
+            react_entry.question: _FakeAgentResponse(text="Use useState()."),
+            oos_entry.question: _FakeAgentResponse(text="I don't have docs for that."),
+        }
+    )
+    await run_corpus(
+        agent=agent, entries=[react_entry, oos_entry], judge=None, isolate_entries=False
+    )
+    assert agent.reset_calls == 0
 
 
 async def test_run_corpus_captures_runner_errors(react_entry: CorpusEntry) -> None:

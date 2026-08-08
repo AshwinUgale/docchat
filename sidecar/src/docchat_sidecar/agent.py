@@ -127,6 +127,13 @@ class AgentResponse:
     citations: list[Citation]
     tool_used: str
     iterations: int = 1  # v0.6: number of tool-call iterations actually run.
+    refused: bool = False
+    """Whether this response is a refusal, decided by the agent (authoritative)
+    rather than by substring-sniffing the text downstream. True for the topic
+    filter short-circuit, the iteration-cap bail-out, and any final answer that
+    is the canonical refusal phrase. The eval harness reads this instead of its
+    ``is_refusal`` heuristic so a legit answer that merely says "X is not
+    covered in 18.2, but ..." isn't miscounted as a refusal."""
 
 
 class Agent:
@@ -176,6 +183,8 @@ class Agent:
         max_iterations: int = 3,
         self_critique: bool = False,
         topic_filter: bool = True,
+        score_floor: float | None = None,
+        floors_by_library: dict[str, float] | None = None,
     ) -> None:
         self._openai = openai
         self._memory = memory
@@ -203,7 +212,16 @@ class Agent:
         # ``--no-topic-filter`` on the eval CLI.
         self._topic_filter = topic_filter
 
-        self._search_docs = SearchDocsTool(qdrant=qdrant, openai=openai)
+        # Retrieval score floors are decision thresholds. SearchDocsTool ships
+        # corpus-tuned defaults; the eval harness can override them here so a
+        # calibration run and an untuned-baseline run don't require editing the
+        # production tool. Only forward the args the caller actually set.
+        search_docs_kwargs: dict[str, Any] = {"qdrant": qdrant, "openai": openai}
+        if score_floor is not None:
+            search_docs_kwargs["score_floor"] = score_floor
+        if floors_by_library is not None:
+            search_docs_kwargs["floors_by_library"] = floors_by_library
+        self._search_docs = SearchDocsTool(**search_docs_kwargs)
         self._search_workspace = SearchWorkspaceCodeTool(workspace_path=workspace_path)
         self._find_changelog = FindInChangelogTool()
 
@@ -217,6 +235,16 @@ class Agent:
         # all of them and the model picks; the architecture stays in place
         # so v0.7+ can grow to N>3 tools without restructuring.
         self._picker = ToolPicker(FunctionSchemaSource(tool_schemas()))
+
+    def reset_memory(self) -> None:
+        """Clear this agent's workspace memory.
+
+        The eval harness calls this between corpus entries (when running in
+        isolated mode) so each labelled probe is answered cold, without prior
+        entries' Q/As leaking into the prompt. Production never calls it — a
+        real workspace session wants memory to accumulate across turns.
+        """
+        self._memory.clear()
 
     async def answer(
         self,
@@ -249,6 +277,7 @@ class Agent:
                 citations=[],
                 tool_used="(topic_filter)",
                 iterations=0,
+                refused=True,
             )
 
         # 1. ToolPicker preselects candidate tools. At v0.6 with 3 tools
@@ -354,6 +383,7 @@ class Agent:
             citations=citations,
             tool_used=last_tool_used,
             iterations=iterations_run,
+            refused=True,
         )
 
     # ------------------------------------------------------------------
@@ -484,8 +514,20 @@ class Agent:
         citations: list[Citation],
         tool_used: str,
         iterations: int,
+        refused: bool | None = None,
     ) -> AgentResponse:
-        """Append inline citations + record the Q/A in Mneme + return."""
+        """Append inline citations + record the Q/A in Mneme + return.
+
+        ``refused`` is the authoritative refusal flag. Pass it explicitly for
+        the non-answer paths (topic filter, iteration cap); leave it ``None``
+        for a normal final answer and it's derived from whether the model
+        emitted the canonical refusal phrase — computed on the raw text before
+        the "Sources:" block is appended.
+        """
+        refused_flag = (
+            refused if refused is not None
+            else _CANONICAL_REFUSAL.lower() in answer_text.lower()
+        )
         if citations:
             citation_block = " ".join(c.render() for c in _dedupe_citations(citations))
             answer_text = f"{answer_text}\n\nSources: {citation_block}"
@@ -502,6 +544,7 @@ class Agent:
             citations=_dedupe_citations(citations),
             tool_used=tool_used,
             iterations=iterations,
+            refused=refused_flag,
         )
 
     async def answer_stream(
@@ -510,22 +553,6 @@ class Agent:
         *,
         pinned_libraries: dict[str, str] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        # v1.0 topic filter: short-circuit to refusal for general-programming.
-        if self._topic_filter and not await self._is_library_topic(
-            query, pinned_libraries=pinned_libraries
-        ):
-            logger.info("topic filter: refusing general-programming query %r", query)
-            yield AssistantTextDelta(text=_CANONICAL_REFUSAL, chunk_index=0)
-            yield AssistantStreamFinal(
-                citations=[],
-                tool_used="(topic_filter)",
-                iterations=0,
-            )
-            try:
-                self._memory.record_qa(query=query, answer=_CANONICAL_REFUSAL, citations=[])
-            except Exception as exc:  # pragma: no cover
-                logger.warning("failed to record topic-filter refusal in Mneme: %s", exc)
-            return
         """Run one query and yield streaming protocol events.
 
         v0.7: same multi-iteration ReAct loop as ``answer()`` but uses
@@ -543,6 +570,22 @@ class Agent:
         ``answer()`` is preserved unchanged for the eval harness; both
         share the same dispatch + memory paths.
         """
+        # v1.0 topic filter: short-circuit to refusal for general-programming.
+        if self._topic_filter and not await self._is_library_topic(
+            query, pinned_libraries=pinned_libraries
+        ):
+            logger.info("topic filter: refusing general-programming query %r", query)
+            yield AssistantTextDelta(text=_CANONICAL_REFUSAL, chunk_index=0)
+            yield AssistantStreamFinal(
+                citations=[],
+                tool_used="(topic_filter)",
+                iterations=0,
+            )
+            try:
+                self._memory.record_qa(query=query, answer=_CANONICAL_REFUSAL, citations=[])
+            except Exception as exc:  # pragma: no cover
+                logger.warning("failed to record topic-filter refusal in Mneme: %s", exc)
+            return
         candidate_names = [s.id for s in self._picker.select(query, k=10)]
         if not candidate_names:
             candidate_names = list(self._tools_by_name.keys())
