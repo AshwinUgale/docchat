@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in DocChat (extension or sidecar) is broken.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for filing a bug! Tell us which half is affected and how to reproduce.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Extension (VS Code / TypeScript)
+        - Sidecar (Python agent / retrieval)
+        - Evals
+        - Setup / build
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got (paste any error from the Output panel / sidecar logs).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      render: shell
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "VS Code 1.9x, Python 3.12, macOS 14; Qdrant via docker"

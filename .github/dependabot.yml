@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/extension"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build(extension)"
+  - package-ecosystem: "pip"
+    directory: "/sidecar"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build(sidecar)"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"

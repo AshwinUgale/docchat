@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Setup & architecture
+    url: https://github.com/AshwinUgale/docchat#readme
+    about: How the extension + sidecar fit together, and how to get it running locally.

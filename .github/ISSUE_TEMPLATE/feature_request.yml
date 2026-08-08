@@ -1,0 +1,26 @@
+name: Feature request / idea
+description: Suggest an agent tool, extension UI improvement, eval case, or other idea.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem / use case
+      description: What are you trying to do that DocChat doesn't support yet?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed idea
+      description: A new agent tool? an indexer/lockfile improvement? a UI change? eval cases? Rough is fine.
+  - type: checkboxes
+    id: kind
+    attributes:
+      label: Kind (optional)
+      options:
+        - label: Sidecar — agent tool / retrieval
+        - label: Sidecar — indexer / lock-file parser
+        - label: Extension — chat UI / citations
+        - label: Evals — new Q/A cases
+        - label: Docs / examples
