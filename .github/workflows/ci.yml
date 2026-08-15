@@ -24,7 +24,7 @@ jobs:
       # to be non-empty to satisfy that import guard. It is NOT a secret.
       OPENAI_API_KEY: sk-ci-placeholder-not-a-real-key
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -73,7 +73,7 @@ jobs:
   extension:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v4
