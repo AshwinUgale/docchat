@@ -185,3 +185,8 @@ Part of a 4-project portfolio of production AI engineering:
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+
+## Add vscode-test integration tests for the extension
+
+Documentation reference and guidelines for #14.
