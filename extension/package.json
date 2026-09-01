@@ -112,7 +112,7 @@
     "lint": "echo 'eslint placeholder'"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.4.0",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.4.0"
   }
